@@ -1,0 +1,5 @@
+name: Billboard
+version: '${version}'
+main: com.jhuanglululu.Billboard
+api-version: '26.2'
+authors: [jhuanglululu]
