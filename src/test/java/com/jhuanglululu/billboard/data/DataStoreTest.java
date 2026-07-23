@@ -50,6 +50,22 @@ class DataStoreTest {
     }
 
     @Test
+    void logMutedRoundTrips(@TempDir Path dir) {
+        Path file = dir.resolve("data.toml");
+        DataStore out = new DataStore();
+        out.logMuted().add("alice");
+        out.logMuted().add("bob");
+        out.save(file);
+
+        DataStore in = DataStore.load(file);
+        assertEquals(List.of("alice", "bob"), List.copyOf(in.logMuted()));
+
+        in.logMuted().remove("alice");
+        in.save(file);
+        assertEquals(List.of("bob"), List.copyOf(DataStore.load(file).logMuted()));
+    }
+
+    @Test
     void removingAPlacementPersists(@TempDir Path dir) {
         Path file = dir.resolve("data.toml");
         DataStore store = new DataStore();

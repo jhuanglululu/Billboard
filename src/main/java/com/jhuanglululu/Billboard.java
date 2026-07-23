@@ -66,7 +66,8 @@ public final class Billboard extends JavaPlugin {
         loadData();
 
         BlockStateValidator validator = new PaperBlockStateValidator();
-        GuestOutput guestOutput = new GuestOutput(getServer(), () -> config.logViewers());
+        GuestOutput guestOutput = new GuestOutput(getServer(), () -> config.logViewers(),
+                () -> data.logMuted(), () -> config.consoleLog());
         WorkerPoolSizer sizer = new WorkerPoolSizer(config.runtime().threads(),
                 Runtime.getRuntime().availableProcessors(), config.runtime().poolShrinkDelayTicks());
         scheduler = new AnimationScheduler(this, config.runtime().threads(), sizer,

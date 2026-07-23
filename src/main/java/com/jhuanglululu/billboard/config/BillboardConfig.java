@@ -5,8 +5,12 @@ import java.util.List;
 /**
  * The operator-facing configuration (config.toml), parsed into immutable values.
  * config.toml is read-only for the plugin.
+ *
+ * @param consoleLog whether the console also receives guest log/fail output (player
+ *     log-viewers always do); plugin lifecycle/error messages are unaffected
  */
-public record BillboardConfig(RuntimeSettings runtime, Proximity proximity, List<String> logViewers) {
+public record BillboardConfig(RuntimeSettings runtime, Proximity proximity, List<String> logViewers,
+        boolean consoleLog) {
 
     public BillboardConfig {
         logViewers = List.copyOf(logViewers);
@@ -43,6 +47,7 @@ public record BillboardConfig(RuntimeSettings runtime, Proximity proximity, List
         return new BillboardConfig(
                 new RuntimeSettings(4, 200, 1_000_000L, 16),
                 new Proximity(64, 20, 100),
-                List.of());
+                List.of(),
+                true);
     }
 }

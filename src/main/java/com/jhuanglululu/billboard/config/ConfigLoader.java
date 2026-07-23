@@ -34,6 +34,7 @@ public final class ConfigLoader {
                 config.getIntOrElse("proximity.check-interval", d.proximity().checkInterval()),
                 config.getIntOrElse("proximity.linger-ticks", d.proximity().lingerTicks()));
         List<String> logViewers = config.getOrElse("logging.log-viewers", d.logViewers());
-        return new BillboardConfig(runtime, proximity, logViewers);
+        boolean consoleLog = config.getOrElse("logging.console", d.consoleLog());
+        return new BillboardConfig(runtime, proximity, logViewers, consoleLog);
     }
 }

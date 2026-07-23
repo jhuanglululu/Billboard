@@ -60,12 +60,29 @@ public final class BillboardCommand {
                 event.registrar().register(cmd.build(), "Billboard animation control", List.of("bb")));
     }
 
-    /** Permission gating the whole command tree (admin-only; default op). */
+    /** Permission gating the admin subcommands (default op). */
     public static final String PERMISSION = "billboard.admin";
 
+    // Access matrix (see build()): admins get every subcommand; config log-viewers get ONLY
+    // /billboard log; everyone else sees nothing (root .requires fails).
+    private boolean isAdmin(CommandSourceStack src) {
+        return src.getSender().hasPermission(PERMISSION);
+    }
+
+    private boolean isLogViewer(CommandSourceStack src) {
+        return config.get().logViewers().contains(src.getSender().getName());
+    }
+
+    private boolean rootAccess(CommandSourceStack src) {
+        return isAdmin(src) || isLogViewer(src);
+    }
+
     private com.mojang.brigadier.tree.LiteralCommandNode<CommandSourceStack> build() {
+        // Root is reachable by admins OR config log-viewers; each admin subcommand re-checks
+        // admin, and /billboard log checks log-viewer-or-admin — so a non-admin log-viewer can
+        // reach only `log`, and a non-admin non-viewer reaches nothing.
         return Commands.literal("billboard")
-                .requires(src -> src.getSender().hasPermission(PERMISSION))
+                .requires(this::rootAccess)
                 .then(spawn())
                 .then(remove())
                 .then(resume())
@@ -75,13 +92,14 @@ public final class BillboardCommand {
                 .then(listFilter("blacklist"))
                 .then(group())
                 .then(set())
+                .then(log())
                 .build();
     }
 
     // --- spawn <animation> <id> <x y z> <type> <visibility> ---
 
     private LiteralArgumentBuilder<CommandSourceStack> spawn() {
-        return Commands.literal("spawn").then(
+        return Commands.literal("spawn").requires(this::isAdmin).then(
             Commands.argument("animation", StringArgumentType.word()).suggests(animationSuggestions()).then(
             Commands.argument("id", StringArgumentType.word()).then(
             Commands.argument("x", DoubleArgumentType.doubleArg()).then(
@@ -121,7 +139,7 @@ public final class BillboardCommand {
     // --- remove <animation> <id> ---
 
     private LiteralArgumentBuilder<CommandSourceStack> remove() {
-        return Commands.literal("remove").then(
+        return Commands.literal("remove").requires(this::isAdmin).then(
             Commands.argument("animation", StringArgumentType.word()).suggests(animationSuggestions()).then(
             Commands.argument("id", StringArgumentType.word()).suggests(placementIdSuggestions())
                     .executes(ctx -> {
@@ -140,7 +158,7 @@ public final class BillboardCommand {
     // --- resume <animation> ---
 
     private LiteralArgumentBuilder<CommandSourceStack> resume() {
-        return Commands.literal("resume").then(
+        return Commands.literal("resume").requires(this::isAdmin).then(
             Commands.argument("animation", StringArgumentType.word()).suggests(animationSuggestions())
                     .executes(ctx -> {
                         String animation = StringArgumentType.getString(ctx, "animation");
@@ -154,7 +172,7 @@ public final class BillboardCommand {
     // --- reload ---
 
     private LiteralArgumentBuilder<CommandSourceStack> reload() {
-        return Commands.literal("reload").executes(ctx -> {
+        return Commands.literal("reload").requires(this::isAdmin).executes(ctx -> {
             ReloadSummary s = reload.get();
             String line = MessageFormats.PREFIX + "<green>reloaded animations: <white>+"
                     + s.diff().added().size() + " ~" + s.diff().changed().size() + " -"
@@ -172,10 +190,38 @@ public final class BillboardCommand {
         });
     }
 
+    // --- log <on|off> (per-player mute for log-viewers) ---
+
+    private LiteralArgumentBuilder<CommandSourceStack> log() {
+        return Commands.literal("log")
+                .requires(this::rootAccess)
+                .then(Commands.literal("on").executes(ctx -> setMuted(ctx, false)))
+                .then(Commands.literal("off").executes(ctx -> setMuted(ctx, true)));
+    }
+
+    private int setMuted(CommandContext<CommandSourceStack> ctx, boolean mute) {
+        String name = ctx.getSource().getSender().getName();
+        if (!config.get().logViewers().contains(name)) {
+            reply(ctx, "<red>You are not a log viewer, so there is nothing to " + (mute ? "mute" : "unmute")
+                    + ".</red>");
+            return Command.SINGLE_SUCCESS;
+        }
+        if (mute) {
+            data.logMuted().add(name);
+        } else {
+            data.logMuted().remove(name);
+        }
+        save.run();
+        reply(ctx, "<green>Guest log output is now <white>" + (mute ? "muted" : "unmuted")
+                + "</white> for you.</green>");
+        return Command.SINGLE_SUCCESS;
+    }
+
     // --- list [animation] ---
 
     private LiteralArgumentBuilder<CommandSourceStack> list() {
         return Commands.literal("list")
+                .requires(this::isAdmin)
                 .executes(ctx -> {
                     listAll(ctx);
                     return Command.SINGLE_SUCCESS;
@@ -236,6 +282,7 @@ public final class BillboardCommand {
     private LiteralArgumentBuilder<CommandSourceStack> listFilter(String which) {
         boolean whitelist = which.equals("whitelist");
         return Commands.literal(which)
+                .requires(this::isAdmin)
                 .then(Commands.literal("add").then(
                     Commands.argument("animation", StringArgumentType.word()).suggests(animationSuggestions()).then(
                     Commands.argument("entry", StringArgumentType.word()).suggests(playerOrGroupSuggestions())
@@ -280,6 +327,7 @@ public final class BillboardCommand {
 
     private LiteralArgumentBuilder<CommandSourceStack> group() {
         return Commands.literal("group")
+                .requires(this::isAdmin)
                 .then(Commands.literal("create").then(
                     Commands.argument("id", StringArgumentType.word()).executes(ctx -> {
                         String id = StringArgumentType.getString(ctx, "id");
@@ -327,7 +375,7 @@ public final class BillboardCommand {
     // --- set <animation> <field> <value> ---
 
     private LiteralArgumentBuilder<CommandSourceStack> set() {
-        return Commands.literal("set").then(
+        return Commands.literal("set").requires(this::isAdmin).then(
             Commands.argument("animation", StringArgumentType.word()).suggests(animationSuggestions()).then(
             Commands.argument("field", StringArgumentType.word()).suggests(literals("visibility", "type")).then(
             Commands.argument("value", StringArgumentType.word()).executes(this::doSet))));

@@ -30,6 +30,14 @@ public final class DataStore {
     private final Map<String, Placement> placements = new TreeMap<>();
     private final Map<String, AnimationSettings> animations = new TreeMap<>();
     private final Map<String, Set<String>> groups = new TreeMap<>();
+    private final Set<String> logMuted = new LinkedHashSet<>();
+
+    // --- log muting ---
+
+    /** The live set of player names who muted guest-log output via {@code /billboard log off}. */
+    public Set<String> logMuted() {
+        return logMuted;
+    }
 
     // --- placements ---
 
@@ -125,6 +133,7 @@ public final class DataStore {
         for (Config c : groupList) {
             group(c.get("id")).addAll(c.getOrElse("players", List.<String>of()));
         }
+        logMuted.addAll(config.getOrElse("log-muted", List.<String>of()));
     }
 
     private void writeTo(Config config) {
@@ -162,6 +171,8 @@ public final class DataStore {
             groupList.add(c);
         }
         config.set("groups", groupList);
+
+        config.set("log-muted", new ArrayList<>(logMuted));
     }
 
     private static double num(Config c, String key) {

@@ -56,7 +56,8 @@ class ProximityControllerTest {
         return new BillboardConfig(
                 BillboardConfig.defaults().runtime(),
                 new BillboardConfig.Proximity(64, 20, linger),
-                List.of());
+                List.of(),
+                true);
     }
 
     private static ViewerPosition viewer(UUID id, String name, double x) {

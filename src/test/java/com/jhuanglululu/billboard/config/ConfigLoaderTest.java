@@ -1,6 +1,8 @@
 package com.jhuanglululu.billboard.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -27,6 +29,7 @@ class ConfigLoaderTest {
 
                 [logging]
                 log-viewers = ["alice", "bob"]
+                console = false
                 """);
 
         BillboardConfig c = ConfigLoader.load(file);
@@ -39,6 +42,7 @@ class ConfigLoaderTest {
         assertEquals(10, c.proximity().checkInterval());
         assertEquals(40, c.proximity().lingerTicks());
         assertEquals(java.util.List.of("alice", "bob"), c.logViewers());
+        assertFalse(c.consoleLog());
     }
 
     @Test
@@ -55,5 +59,6 @@ class ConfigLoaderTest {
         assertEquals(d.runtime().instructionBudget(), c.runtime().instructionBudget()); // default
         assertEquals(d.proximity().radius(), c.proximity().radius());              // default
         assertEquals(d.logViewers(), c.logViewers());                             // default
+        assertTrue(c.consoleLog());                                               // default true
     }
 }

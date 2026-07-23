@@ -36,5 +36,12 @@ linger-ticks = 100
 
 [logging]
 # Players who receive guest log/fail output, e.g. log-viewers = ["name"].
-# The console always receives everything; owners and other players never do.
+# Owners and other players never do. A viewer can mute themselves with
+# /billboard log off (stored per-player, cleared with /billboard log on).
 log-viewers = []
+
+# Whether the console also receives guest log/fail output. Turn this off to
+# avoid console spam when many animation instances log under heavy player load;
+# player log-viewers still receive it. Plugin lifecycle/error messages are
+# unaffected by this setting.
+console = true
