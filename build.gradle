@@ -1,5 +1,6 @@
 plugins {
     id 'java'
+    id 'com.gradleup.shadow' version '9.6.0'
     id 'xyz.jpenilla.run-paper' version '3.0.2'
     id 'net.ltgt.errorprone' version '5.1.0'
 }
@@ -19,10 +20,17 @@ repositories {
         name = 'papermc'
         url = uri('https://repo.papermc.io/repository/maven-public/')
     }
+    maven {
+        name = 'codemc'
+        url = uri('https://repo.codemc.io/repository/maven-releases/')
+    }
 }
 
 dependencies {
     compileOnly 'io.papermc.paper:paper-api:26.2.build.+'
+    // Shaded + relocated (see shadowJar) so the jar is self-contained.
+    implementation 'com.github.retrooper:packetevents-spigot:2.13.0'
+    implementation 'com.electronwill.night-config:toml:3.8.3'
     errorprone 'com.google.errorprone:error_prone_core:2.50.0'
     testImplementation 'org.junit.jupiter:junit-jupiter:6.1.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.2'
@@ -44,6 +52,16 @@ processResources {
     filesMatching('plugin.yml') {
         expand props
     }
+}
+
+shadowJar {
+    archiveClassifier = 'all'
+    // Relocate bundled libraries out of their own namespaces so a server that also
+    // ships PacketEvents / night-config never clashes with our shaded copies.
+    def libs = 'com.jhuanglululu.billboard.libs'
+    relocate 'com.github.retrooper.packetevents', "${libs}.packetevents.api"
+    relocate 'io.github.retrooper.packetevents', "${libs}.packetevents.spigot"
+    relocate 'com.electronwill.nightconfig', "${libs}.nightconfig"
 }
 
 runServer {
