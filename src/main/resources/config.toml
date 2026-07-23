@@ -1,0 +1,40 @@
+# Billboard configuration. Values apply on /billboard reload or server restart.
+# Runtime-managed state (placements, groups, whitelists, paused flags) lives
+# in data.toml — don't edit that file by hand while the server runs.
+
+[runtime]
+# Hard cap on interpreter worker threads. The actual pool size is
+# max(1, min(active_instances / 5, cpu_cores, this value)).
+threads = 4
+
+# The pool grows immediately with demand but only shrinks after demand has
+# stayed lower for this many ticks (debounce against instance-count jitter).
+pool-shrink-delay-ticks = 200
+
+# Max interpreter instructions one animation instance may execute per game
+# tick (shared across all its tasks). Exceeding it kills the animation and
+# pauses it. 1M instructions is well under 1 ms on a modern core.
+instruction-budget = 1000000
+
+# Max guest memory per animation instance, in MiB. Every fork copies the
+# whole memory, so a 3-task animation costs up to 3x this.
+memory-cap-mib = 16
+
+[proximity]
+# An instance runs only while an eligible player is within this many blocks
+# of its placement (same world). Out of range = the instance dies (not
+# pauses) and restarts fresh on approach.
+radius = 64
+
+# How often (in ticks) to re-check player proximity.
+check-interval = 20
+
+# How long (in ticks) an out-of-range instance lingers before dying, so a
+# player jittering at the border doesn't thrash restarts. The instance keeps
+# running during the window — a returning player sees it continue seamlessly.
+linger-ticks = 100
+
+[logging]
+# Players who receive guest log/fail output, e.g. log-viewers = ["name"].
+# The console always receives everything; owners and other players never do.
+log-viewers = []
