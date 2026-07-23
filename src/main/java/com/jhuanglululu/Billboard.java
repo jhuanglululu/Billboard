@@ -6,7 +6,11 @@ import com.jhuanglululu.billboard.config.BillboardConfig;
 import com.jhuanglululu.billboard.config.ConfigLoader;
 import com.jhuanglululu.billboard.data.DataStore;
 import com.jhuanglululu.billboard.data.Placement;
+import com.jhuanglululu.billboard.load.AnimationReloadDiff;
+import com.jhuanglululu.billboard.load.ReloadSummary;
 import com.jhuanglululu.billboard.message.GuestOutput;
+import com.jhuanglululu.billboard.message.MessageFormats;
+import com.jhuanglululu.billboard.message.Messages;
 import com.jhuanglululu.billboard.placement.BukkitPositionSource;
 import com.jhuanglululu.billboard.placement.ProximityController;
 import com.jhuanglululu.billboard.render.PaperBlockStateValidator;
@@ -21,7 +25,10 @@ import io.github.retrooper.packetevents.factory.spigot.SpigotPacketEventsBuilder
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -35,12 +42,15 @@ import org.bukkit.plugin.java.JavaPlugin;
 public final class Billboard extends JavaPlugin {
 
     private final Map<String, Module> animations = new HashMap<>();
+    private final Map<String, Integer> animationHashes = new HashMap<>();
     private BillboardConfig config = BillboardConfig.defaults();
     private DataStore data;
     private Path dataFile;
     private AnimationScheduler scheduler;
     private ProximityController<RunningInstance> controller;
     private long lifecycleTick;
+
+    private record Scan(Map<String, Module> modules, Map<String, Integer> hashes, List<String> errors) {}
 
     @Override
     public void onLoad() {
@@ -68,6 +78,8 @@ public final class Billboard extends JavaPlugin {
 
         scheduler.setEndHandler(controller::forget);
         scheduler.setErrorHandler(this::pauseAnimation);
+        controller.setStartFailureHandler((animation, message) ->
+                pauseAnimation(animation, "could not start instance: " + message));
         scheduler.start();
 
         int interval = Math.max(1, config.proximity().checkInterval());
@@ -76,7 +88,8 @@ public final class Billboard extends JavaPlugin {
             controller.check(lifecycleTick);
         }, interval, interval);
 
-        BillboardCommand.register(this, data, this::saveData, animations::keySet, getServer(), () -> config);
+        BillboardCommand.register(this, data, this::saveData, animations::keySet, getServer(),
+                () -> config, this::reload);
 
         PacketEvents.getAPI().init();
         getLogger().info("Billboard enabled: " + animations.size() + " animation(s), "
@@ -108,30 +121,68 @@ public final class Billboard extends JavaPlugin {
         config = ConfigLoader.load(configFile);
     }
 
-    private void loadAnimations() {
-        animations.clear();
+    /** Scans and parses every {@code .wasm} in the animations folder; never throws. */
+    private Scan scan() {
+        Map<String, Module> modules = new HashMap<>();
+        Map<String, Integer> hashes = new HashMap<>();
+        List<String> errors = new ArrayList<>();
         Path dir = getDataFolder().toPath().resolve("animations");
         try {
             Files.createDirectories(dir);
         } catch (IOException e) {
-            getLogger().severe("Could not create animations folder: " + e.getMessage());
-            return;
+            errors.add("cannot create animations folder: " + e.getMessage());
+            return new Scan(modules, hashes, errors);
         }
         try (Stream<Path> files = Files.list(dir)) {
-            files.filter(p -> p.getFileName().toString().endsWith(".wasm")).forEach(this::loadOneAnimation);
+            files.filter(p -> p.getFileName().toString().endsWith(".wasm")).sorted().forEach(file -> {
+                String name = file.getFileName().toString().replaceFirst("\\.wasm$", "");
+                try {
+                    byte[] bytes = Files.readAllBytes(file);
+                    modules.put(name, Module.parse(bytes));
+                    hashes.put(name, Arrays.hashCode(bytes));
+                } catch (IOException | WasmParseException e) {
+                    errors.add(name + ": " + e.getMessage());
+                }
+            });
         } catch (IOException e) {
-            getLogger().severe("Could not scan animations folder: " + e.getMessage());
+            errors.add("cannot scan animations folder: " + e.getMessage());
+        }
+        return new Scan(modules, hashes, errors);
+    }
+
+    private void loadAnimations() {
+        Scan scan = scan();
+        animations.clear();
+        animations.putAll(scan.modules());
+        animationHashes.clear();
+        animationHashes.putAll(scan.hashes());
+        for (String error : scan.errors()) {
+            getLogger().severe("Animation load failed — " + error
+                    + " (paused; fix and /billboard reload then /billboard resume)");
         }
     }
 
-    private void loadOneAnimation(Path file) {
-        String name = file.getFileName().toString().replaceFirst("\\.wasm$", "");
-        try {
-            animations.put(name, Module.parse(Files.readAllBytes(file)));
-        } catch (IOException | WasmParseException e) {
-            getLogger().severe("Failed to load animation \"" + name + "\": " + e.getMessage()
-                    + " — placements of it are paused until it loads and /billboard resume " + name);
+    /** Rescan the folder, restart changed/removed animations' instances, report a summary. */
+    public ReloadSummary reload() {
+        Scan scan = scan();
+        AnimationReloadDiff diff = AnimationReloadDiff.compute(animationHashes, scan.hashes());
+        for (String name : diff.stopped()) {
+            controller.stopInstancesOf(name); // changed/removed: stop (cleanup); proximity restarts if still present
         }
+        animations.clear();
+        animations.putAll(scan.modules());
+        animationHashes.clear();
+        animationHashes.putAll(scan.hashes());
+        for (String removed : diff.removed()) {
+            data.animation(removed).setPaused(true); // no module -> keep it from instantiating
+        }
+        saveData();
+        for (String error : scan.errors()) {
+            getLogger().severe("Reload — " + error);
+        }
+        getLogger().info("Reloaded animations: +" + diff.added().size() + " ~" + diff.changed().size()
+                + " -" + diff.removed().size() + (scan.errors().isEmpty() ? "" : " (" + scan.errors().size() + " error(s))"));
+        return new ReloadSummary(diff, scan.errors());
     }
 
     private void loadData() {
@@ -149,9 +200,15 @@ public final class Billboard extends JavaPlugin {
         data.save(dataFile);
     }
 
+    /** Pause an animation after an error and report it once (loud: console MiniMessage + log). */
     private void pauseAnimation(String animation, String message) {
         data.animation(animation).setPaused(true);
         saveData();
+        String line = MessageFormats.PREFIX + "<red>Animation <white>" + MessageFormats.escape(animation)
+                + "</white> paused after an error</red>";
+        String hover = MessageFormats.escape(message) + "\n<gray>clear with /billboard resume "
+                + MessageFormats.escape(animation) + "</gray>";
+        getServer().getConsoleSender().sendMessage(Messages.withHover(line, hover));
         getLogger().severe("Animation \"" + animation + "\" paused after an error: " + message
                 + " — clear with /billboard resume " + animation);
     }

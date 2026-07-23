@@ -6,6 +6,7 @@ import com.jhuanglululu.billboard.data.DataStore;
 import com.jhuanglululu.billboard.data.InstanceType;
 import com.jhuanglululu.billboard.data.Placement;
 import com.jhuanglululu.billboard.data.VisibilityMode;
+import com.jhuanglululu.billboard.load.ReloadSummary;
 import com.jhuanglululu.billboard.message.MessageFormats;
 import com.jhuanglululu.billboard.message.Messages;
 import com.mojang.brigadier.Command;
@@ -18,6 +19,7 @@ import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 import org.bukkit.Server;
@@ -37,20 +39,23 @@ public final class BillboardCommand {
     private final Supplier<Set<String>> animationNames;
     private final Server server;
     private final Supplier<BillboardConfig> config;
+    private final Supplier<ReloadSummary> reload;
 
     private BillboardCommand(DataStore data, Runnable save, Supplier<Set<String>> animationNames,
-            Server server, Supplier<BillboardConfig> config) {
+            Server server, Supplier<BillboardConfig> config, Supplier<ReloadSummary> reload) {
         this.data = data;
         this.save = save;
         this.animationNames = animationNames;
         this.server = server;
         this.config = config;
+        this.reload = reload;
     }
 
     /** Register {@code /billboard} on the plugin's command lifecycle. */
     public static void register(JavaPlugin plugin, DataStore data, Runnable save,
-            Supplier<Set<String>> animationNames, Server server, Supplier<BillboardConfig> config) {
-        BillboardCommand cmd = new BillboardCommand(data, save, animationNames, server, config);
+            Supplier<Set<String>> animationNames, Server server, Supplier<BillboardConfig> config,
+            Supplier<ReloadSummary> reload) {
+        BillboardCommand cmd = new BillboardCommand(data, save, animationNames, server, config, reload);
         plugin.getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event ->
                 event.registrar().register(cmd.build(), "Billboard animation control", List.of("bb")));
     }
@@ -64,6 +69,7 @@ public final class BillboardCommand {
                 .then(spawn())
                 .then(remove())
                 .then(resume())
+                .then(reload())
                 .then(list())
                 .then(listFilter("whitelist"))
                 .then(listFilter("blacklist"))
@@ -94,6 +100,11 @@ public final class BillboardCommand {
         double y = DoubleArgumentType.getDouble(ctx, "y");
         double z = DoubleArgumentType.getDouble(ctx, "z");
         String world = worldOf(ctx);
+        Optional<String> unknown = SpawnValidator.rejectUnknown(animation, animationNames.get());
+        if (unknown.isPresent()) {
+            reply(ctx, unknown.get());
+            return Command.SINGLE_SUCCESS;
+        }
         try {
             InstanceType type = InstanceType.fromWire(StringArgumentType.getString(ctx, "type"));
             VisibilityMode visibility = VisibilityMode.fromWire(StringArgumentType.getString(ctx, "visibility"));
@@ -138,6 +149,27 @@ public final class BillboardCommand {
                         reply(ctx, "<green>Cleared the error-pause on <white>" + esc(animation) + "</white></green>");
                         return Command.SINGLE_SUCCESS;
                     }));
+    }
+
+    // --- reload ---
+
+    private LiteralArgumentBuilder<CommandSourceStack> reload() {
+        return Commands.literal("reload").executes(ctx -> {
+            ReloadSummary s = reload.get();
+            String line = MessageFormats.PREFIX + "<green>reloaded animations: <white>+"
+                    + s.diff().added().size() + " ~" + s.diff().changed().size() + " -"
+                    + s.diff().removed().size() + "</white></green>"
+                    + (s.errors().isEmpty() ? "" : " <red>(" + s.errors().size() + " error(s))</red>");
+            StringBuilder hover = new StringBuilder();
+            hover.append("added: ").append(esc(String.valueOf(s.diff().added())))
+                    .append("\nchanged: ").append(esc(String.valueOf(s.diff().changed())))
+                    .append("\nremoved: ").append(esc(String.valueOf(s.diff().removed())));
+            for (String err : s.errors()) {
+                hover.append("\n<red>").append(esc(err)).append("</red>");
+            }
+            ctx.getSource().getSender().sendMessage(Messages.withHover(line, hover.toString()));
+            return Command.SINGLE_SUCCESS;
+        });
     }
 
     // --- list [animation] ---

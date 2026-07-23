@@ -169,4 +169,36 @@ class ProximityControllerTest {
         assertEquals(0, life.live.size());
         assertTrue(life.stopped >= 1);
     }
+
+    @Test
+    void instanceStartFailurePausesReportsOnceAndDoesNotRetry() {
+        DataStore data = new DataStore();
+        data.putPlacement(new Placement("demo", "sq", "world", 0, 64, 0,
+                InstanceType.SHARED, VisibilityMode.EVERYONE));
+        FakePositions pos = new FakePositions();
+        InstanceLifecycle<String> throwing = new InstanceLifecycle<>() {
+            @Override
+            public String start(Placement placement, Set<ViewerPosition> viewers) {
+                throw new IllegalStateException("no loaded module for animation demo");
+            }
+
+            @Override
+            public void setViewers(String handle, Set<ViewerPosition> viewers) { }
+
+            @Override
+            public void stop(String handle) { }
+        };
+        int[] reports = {0};
+        ProximityController<String> c = new ProximityController<>(pos, throwing, data, () -> config(100));
+        c.setStartFailureHandler((animation, message) -> reports[0]++);
+
+        pos.players.add(viewer(UUID.randomUUID(), "alice", 5));
+        c.check(0);   // start attempt throws -> paused + reported
+        c.check(1);   // paused -> no start attempt (no retry)
+        c.check(2);
+
+        assertTrue(data.animation("demo").paused());
+        assertEquals(1, reports[0], "start failure must be reported exactly once, not per check");
+        assertEquals(0, c.activeInstanceCount());
+    }
 }

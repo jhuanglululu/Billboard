@@ -1,6 +1,7 @@
 package com.jhuanglululu.billboard.scheduler;
 
 import com.jhuanglululu.billboard.data.Placement;
+import com.jhuanglululu.billboard.render.Origin;
 import com.jhuanglululu.billboard.render.PacketEventsRenderer;
 import com.jhuanglululu.billboard.runtime.AnimationInstance;
 import com.jhuanglululu.billboard.runtime.BlockStateValidator;
@@ -26,7 +27,7 @@ public final class RunningInstance {
     private final Module module;
     private final BlockStateValidator validator;
     private final long memoryCapBytes;
-    private final PacketEventsRenderer renderer = new PacketEventsRenderer();
+    private final PacketEventsRenderer renderer;
     private final Queue<String> logBuffer = new ConcurrentLinkedQueue<>();
 
     private AnimationInstance instance;
@@ -38,6 +39,8 @@ public final class RunningInstance {
         this.module = module;
         this.validator = validator;
         this.memoryCapBytes = memoryCapBytes;
+        this.renderer = new PacketEventsRenderer(
+                new Origin(placement.world(), placement.x(), placement.y(), placement.z()));
         this.instance = build();
     }
 

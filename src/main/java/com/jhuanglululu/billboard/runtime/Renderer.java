@@ -3,8 +3,12 @@ package com.jhuanglululu.billboard.runtime;
 /**
  * The visual side effects an animation produces, as the runtime observes them. The
  * plugin implements this with client-side entity packets; tests implement it with a
- * recorder. All coordinates are relative to the animation origin, and every id is a
- * host-allocated entity id from the {@link EntityRegistry}.
+ * recorder. Every id is a host-allocated entity id from the {@link EntityRegistry}.
+ *
+ * <p><b>Coordinate contract:</b> every position ({@code spawnBlockDisplay}, {@code setPosition})
+ * is <em>relative to the placement origin</em> — callers always pass origin-relative
+ * coordinates, and it is the implementation's responsibility to translate them to absolute
+ * world coordinates (add the origin) before rendering. Rotations and scales carry no origin.
  *
  * <p>{@code overTicks} is the interpolation duration for a change ({@code 0} = instant);
  * the runtime forwards it verbatim — smoothing is the renderer's concern, not the
@@ -12,10 +16,10 @@ package com.jhuanglululu.billboard.runtime;
  */
 public interface Renderer {
 
-    /** Spawn a block display showing {@code blockState} at {@code (x, y, z)}. */
+    /** Spawn a block display showing {@code blockState} at origin-relative {@code (x, y, z)}. */
     void spawnBlockDisplay(int id, String blockState, double x, double y, double z);
 
-    /** Move {@code id} to {@code (x, y, z)}, interpolating over {@code overTicks}. */
+    /** Move {@code id} to origin-relative {@code (x, y, z)}, interpolating over {@code overTicks}. */
     void setPosition(int id, double x, double y, double z, long overTicks);
 
     /** Rotate {@code id} to quaternion {@code (qx, qy, qz, qw)} over {@code overTicks}. */

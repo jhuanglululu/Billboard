@@ -35,9 +35,18 @@ import org.bukkit.entity.Player;
  *
  * <p>PacketEvents sends are async-safe, so this is called from interpreter worker threads.
  *
- * <p><b>Protocol note:</b> the display-entity metadata indices below follow the 1.20.x entity
- * data layout and MUST be verified against the target Minecraft version during the real-server
- * E2E; they are the one version-sensitive part of this class.
+ * <p><b>Display-entity metadata (verified against MC 26.2 + PacketEvents 2.13.0):</b>
+ * <pre>
+ *  idx  field                                    EntityDataType   value class
+ *   9   transformation interpolation duration    INT              Integer
+ *  10   pos/rot (teleport) interpolation duration INT             Integer
+ *  11   translation                              VECTOR3F         Vector3f
+ *  12   scale                                    VECTOR3F         Vector3f
+ *  13   left rotation                            QUATERNION       Quaternion4f
+ *  23   block state (BlockDisplay)               BLOCK_STATE      Integer (global id)
+ * </pre>
+ * Index 23 must be BLOCK_STATE, not INT: the client's slot is BlockState-typed, and sending an
+ * INT triggers a "Invalid entity data item type for field 23" protocol error / disconnect.
  */
 public final class PacketEventsRenderer implements Renderer {
 
@@ -49,6 +58,12 @@ public final class PacketEventsRenderer implements Renderer {
     private static final int MD_SCALE = 12;
     private static final int MD_LEFT_ROTATION = 13;
     private static final int MD_BLOCK_STATE = 23;
+
+    private final Origin origin;
+
+    public PacketEventsRenderer(Origin origin) {
+        this.origin = origin;
+    }
 
     private static final class Tracked {
         final int clientId;
@@ -97,9 +112,9 @@ public final class PacketEventsRenderer implements Renderer {
         t.y = y;
         t.z = z;
         // Set the teleport (position/rotation) interpolation duration first so the client
-        // smooths the move, then teleport.
+        // smooths the move, then teleport to the origin-translated world position.
         broadcast(metadata(t.clientId, intData(MD_POSROT_INTERP_DURATION, (int) overTicks)));
-        broadcast(new WrapperPlayServerEntityTeleport(t.clientId, new Vector3d(x, y, z), 0f, 0f, false));
+        broadcast(new WrapperPlayServerEntityTeleport(t.clientId, worldPos(t), 0f, 0f, false));
     }
 
     @Override
@@ -139,7 +154,7 @@ public final class PacketEventsRenderer implements Renderer {
             return;
         }
         t.block = blockState;
-        broadcast(metadata(t.clientId, intData(MD_BLOCK_STATE, blockStateId(blockState))));
+        broadcast(metadata(t.clientId, blockStateData(blockStateId(blockState))));
     }
 
     @Override
@@ -182,17 +197,27 @@ public final class PacketEventsRenderer implements Renderer {
 
     private void spawnTo(Player viewer, Tracked t) {
         sendTo(viewer, new WrapperPlayServerSpawnEntity(t.clientId, Optional.of(t.uuid),
-                EntityTypes.BLOCK_DISPLAY, new Vector3d(t.x, t.y, t.z), 0f, 0f, 0f, 0, Optional.empty()));
+                EntityTypes.BLOCK_DISPLAY, worldPos(t), 0f, 0f, 0f, 0, Optional.empty()));
         sendTo(viewer, metadata(t.clientId,
-                intData(MD_BLOCK_STATE, blockStateId(t.block)),
+                blockStateData(blockStateId(t.block)),
                 new EntityData<>(MD_TRANSLATION, EntityDataTypes.VECTOR3F, new Vector3f(0f, 0f, 0f)),
                 new EntityData<>(MD_SCALE, EntityDataTypes.VECTOR3F, new Vector3f(t.sx, t.sy, t.sz)),
                 new EntityData<>(MD_LEFT_ROTATION, EntityDataTypes.QUATERNION,
                         new Quaternion4f(t.qx, t.qy, t.qz, t.qw))));
     }
 
+    /** The entity's absolute world position: the placement origin plus its relative coords. */
+    private Vector3d worldPos(Tracked t) {
+        return new Vector3d(origin.worldX(t.x), origin.worldY(t.y), origin.worldZ(t.z));
+    }
+
     private static EntityData<?> intData(int index, int value) {
         return new EntityData<>(index, EntityDataTypes.INT, value);
+    }
+
+    /** Field 23 is a BLOCK_STATE slot (the global id as an Integer), not an INT. */
+    private static EntityData<?> blockStateData(int globalId) {
+        return new EntityData<>(MD_BLOCK_STATE, EntityDataTypes.BLOCK_STATE, globalId);
     }
 
     private static WrapperPlayServerEntityMetadata metadata(int clientId, EntityData<?>... data) {

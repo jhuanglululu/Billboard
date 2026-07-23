@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
 /**
@@ -49,12 +50,38 @@ public final class ProximityController<H> {
     private final Map<String, Running<H>> shared = new HashMap<>();
     private final Map<String, Map<UUID, Running<H>>> perPlayer = new HashMap<>();
 
+    private BiConsumer<String, String> startFailureHandler = (animation, message) -> { };
+
     public ProximityController(PositionSource positions, InstanceLifecycle<H> lifecycle,
             DataStore data, Supplier<BillboardConfig> config) {
         this.positions = positions;
         this.lifecycle = lifecycle;
         this.data = data;
         this.config = config;
+    }
+
+    /**
+     * Called (once) with {@code (animation, message)} when {@link InstanceLifecycle#start}
+     * fails; the controller has already paused the animation so it won't be retried, so the
+     * handler need only persist and report the failure.
+     */
+    public void setStartFailureHandler(BiConsumer<String, String> startFailureHandler) {
+        this.startFailureHandler = startFailureHandler;
+    }
+
+    /**
+     * Starts an instance, catching any failure: a broken start pauses the animation (so the
+     * next check computes no eligible viewers and never retries) and reports exactly once.
+     * Returns {@code null} when the start failed, so the caller must not track it.
+     */
+    private H tryStart(Placement placement, Set<ViewerPosition> viewers) {
+        try {
+            return lifecycle.start(placement, viewers);
+        } catch (RuntimeException e) {
+            data.animation(placement.animation()).setPaused(true);
+            startFailureHandler.accept(placement.animation(), String.valueOf(e.getMessage()));
+            return null;
+        }
     }
 
     /** Re-evaluate every placement at {@code currentTick}, starting/lingering/stopping instances. */
@@ -99,7 +126,10 @@ public final class ProximityController<H> {
         if (!eligible.isEmpty()) {
             Set<ViewerPosition> viewers = new HashSet<>(eligible);
             if (r == null) {
-                shared.put(p.key(), new Running<>(lifecycle.start(p, viewers)));
+                H handle = tryStart(p, viewers);
+                if (handle != null) {
+                    shared.put(p.key(), new Running<>(handle));
+                }
             } else {
                 r.deathTick = -1;
                 lifecycle.setViewers(r.handle, viewers);
@@ -132,7 +162,10 @@ public final class ProximityController<H> {
             stillEligible.add(v.uuid());
             Running<H> r = byPlayer.get(v.uuid());
             if (r == null) {
-                byPlayer.put(v.uuid(), new Running<>(lifecycle.start(p, Set.of(v))));
+                H handle = tryStart(p, Set.of(v));
+                if (handle != null) {
+                    byPlayer.put(v.uuid(), new Running<>(handle));
+                }
             } else {
                 r.deathTick = -1;
                 lifecycle.setViewers(r.handle, Set.of(v));
@@ -193,6 +226,30 @@ public final class ProximityController<H> {
             }
         }
         perPlayer.clear();
+    }
+
+    /**
+     * Stop and forget every instance of {@code animation} (used on reload when its module was
+     * changed or removed); the proximity path restarts still-present placements next check.
+     */
+    public void stopInstancesOf(String animation) {
+        String prefix = animation + "/";
+        shared.entrySet().removeIf(e -> {
+            if (e.getKey().startsWith(prefix)) {
+                lifecycle.stop(e.getValue().handle);
+                return true;
+            }
+            return false;
+        });
+        perPlayer.entrySet().removeIf(e -> {
+            if (e.getKey().startsWith(prefix)) {
+                for (Running<H> r : e.getValue().values()) {
+                    lifecycle.stop(r.handle);
+                }
+                return true;
+            }
+            return false;
+        });
     }
 
     /** The number of instances currently tracked as running (for pool sizing). */
