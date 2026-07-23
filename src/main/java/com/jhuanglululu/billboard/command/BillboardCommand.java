@@ -55,8 +55,12 @@ public final class BillboardCommand {
                 event.registrar().register(cmd.build(), "Billboard animation control", List.of("bb")));
     }
 
+    /** Permission gating the whole command tree (admin-only; default op). */
+    public static final String PERMISSION = "billboard.admin";
+
     private com.mojang.brigadier.tree.LiteralCommandNode<CommandSourceStack> build() {
         return Commands.literal("billboard")
+                .requires(src -> src.getSender().hasPermission(PERMISSION))
                 .then(spawn())
                 .then(remove())
                 .then(resume())

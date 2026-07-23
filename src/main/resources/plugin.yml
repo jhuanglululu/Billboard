@@ -3,3 +3,7 @@ version: '${version}'
 main: com.jhuanglululu.Billboard
 api-version: '26.2'
 authors: [jhuanglululu]
+permissions:
+  billboard.admin:
+    description: Manage Billboard animations, placements, and visibility lists
+    default: op
