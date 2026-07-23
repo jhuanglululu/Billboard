@@ -24,6 +24,12 @@ repositories {
 dependencies {
     compileOnly 'io.papermc.paper:paper-api:26.2.build.+'
     errorprone 'com.google.errorprone:error_prone_core:2.50.0'
+    testImplementation 'org.junit.jupiter:junit-jupiter:6.1.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.2'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
 }
 
 tasks.withType(JavaCompile).configureEach {
