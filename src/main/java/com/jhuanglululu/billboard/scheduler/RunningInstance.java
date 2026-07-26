@@ -5,6 +5,7 @@ import com.jhuanglululu.billboard.render.Origin;
 import com.jhuanglululu.billboard.render.PacketEventsRenderer;
 import com.jhuanglululu.billboard.runtime.AnimationInstance;
 import com.jhuanglululu.billboard.runtime.BlockStateValidator;
+import com.jhuanglululu.billboard.runtime.ContentValidator;
 import com.jhuanglululu.billboard.runtime.LogSink;
 import com.jhuanglululu.billboard.runtime.TickResult;
 import com.jhuanglululu.wasm.Module;
@@ -26,6 +27,7 @@ public final class RunningInstance {
     private final String ownerLabel;
     private final Module module;
     private final BlockStateValidator validator;
+    private final ContentValidator content;
     private final long memoryCapBytes;
     private final PacketEventsRenderer renderer;
     private final Queue<String> logBuffer = new ConcurrentLinkedQueue<>();
@@ -33,11 +35,12 @@ public final class RunningInstance {
     private AnimationInstance instance;
 
     public RunningInstance(Placement placement, String ownerLabel, Module module,
-            BlockStateValidator validator, long memoryCapBytes) {
+            BlockStateValidator validator, ContentValidator content, long memoryCapBytes) {
         this.placement = placement;
         this.ownerLabel = ownerLabel;
         this.module = module;
         this.validator = validator;
+        this.content = content;
         this.memoryCapBytes = memoryCapBytes;
         this.renderer = new PacketEventsRenderer(
                 new Origin(placement.world(), placement.x(), placement.y(), placement.z()));
@@ -46,12 +49,22 @@ public final class RunningInstance {
 
     private AnimationInstance build() {
         LogSink sink = (animation, message) -> logBuffer.add(message);
-        return new AnimationInstance(placement.animation(), module, renderer, validator, sink, memoryCapBytes);
+        // The seed is stable across restarts and across restarts of this placement, so a
+        // per_player billboard shows each player the same variation on every visit.
+        long seed = AnimationInstance.stableSeed(placement.animation(), placement.id(), ownerLabel);
+        return new AnimationInstance(placement.animation(), module, renderer, validator, content,
+                sink, memoryCapBytes, seed);
     }
 
-    /** Advance one tick (runs on a worker thread; sends packets during execution). */
+    /**
+     * Advance one tick (runs on a worker thread; sends packets during execution), then step the
+     * renderer's host tweens. Tweens ride the animation's own tick, so a dead or paused instance
+     * simply stops moving — no separate timer to leak.
+     */
     public TickResult tick(long currentTick, long budget) {
-        return instance.tick(currentTick, budget);
+        TickResult result = instance.tick(currentTick, budget);
+        renderer.tickTweens();
+        return result;
     }
 
     /** Update the audience (main thread). */

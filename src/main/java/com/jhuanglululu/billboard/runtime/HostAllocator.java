@@ -13,8 +13,9 @@ import java.util.TreeMap;
  * blocks are merged with adjacent free blocks and reused, and a free block that reaches
  * the top of the heap lowers the bump pointer. Allocations honor the requested
  * alignment. The heap starts at the module's exported {@code __heap_base} and grows
- * upward, growing linear memory through the {@link ExecutionContext} as needed, but
- * never past the per-instance byte cap.
+ * upward, growing linear memory through the {@link ExecutionContext} as needed, but never past the
+ * per-instance {@link MemoryBudget} — which it shares with every other task's heap and with the
+ * channel buffers, because the configured cap is per instance, not per allocator.
  *
  * <p>The guest always supplies {@code old_size} on free/realloc, so blocks carry no
  * header — the free list is the only bookkeeping, and {@link #copy()} duplicates it
@@ -28,31 +29,49 @@ public final class HostAllocator {
     private static final int PAGE = 65536;
 
     private final int heapBase;
-    private final long byteCap;
+    private final MemoryBudget budget;
     private int top; // next fresh address (bump pointer above all allocations)
     // Free blocks: start offset -> size in bytes, sorted by offset for coalescing.
     private final TreeMap<Integer, Integer> free = new TreeMap<>();
 
     /**
      * @param heapBase the module's {@code __heap_base}; the heap starts here
-     * @param byteCap  the maximum heap size in bytes (top address minus {@code heapBase})
+     * @param budget   the instance-wide byte budget this heap charges against
      */
-    public HostAllocator(int heapBase, long byteCap) {
+    public HostAllocator(int heapBase, MemoryBudget budget) {
         this.heapBase = heapBase;
-        this.byteCap = byteCap;
+        this.budget = budget;
         this.top = heapBase;
+    }
+
+    /** Convenience for callers with no shared budget (tests): a private cap of {@code byteCap}. */
+    public HostAllocator(int heapBase, long byteCap) {
+        this(heapBase, new MemoryBudget(byteCap));
     }
 
     private HostAllocator(HostAllocator other) {
         this.heapBase = other.heapBase;
-        this.byteCap = other.byteCap;
+        this.budget = other.budget;
         this.top = other.top;
         this.free.putAll(other.free);
+        // The child's memory is a real second copy, so its heap is charged again.
+        budget.reserve(allocatedHighWater(), "a forked task's heap copy");
     }
 
-    /** A deep copy of the allocator bookkeeping, for a forking task's memory copy. */
+    /**
+     * A deep copy of the allocator bookkeeping, for a forking task's memory copy.
+     *
+     * @throws MemoryCapExceededException if copying the heap would exceed the instance budget
+     */
     public HostAllocator copy() {
         return new HostAllocator(this);
+    }
+
+    /** Returns this heap's whole charge to the budget (its task ended). */
+    public void releaseAll() {
+        budget.release(allocatedHighWater());
+        top = heapBase;
+        free.clear();
     }
 
     /**
@@ -114,13 +133,10 @@ public final class HostAllocator {
             return chosenAligned;
         }
 
-        // Otherwise bump the top.
+        // Otherwise bump the top, charging the instance budget for the growth.
         int aligned = alignUp(top, a);
         long newTop = (long) aligned + need;
-        if (newTop - heapBase > byteCap) {
-            throw new MemoryCapExceededException("animation memory cap of " + byteCap
-                    + " bytes exceeded (allocation would need " + (newTop - heapBase) + " bytes)");
-        }
+        budget.reserve(newTop - top, "the guest heap");
         ensureCapacity(ctx, newTop);
         if (aligned > top) {
             addFree(top, aligned - top);
@@ -150,7 +166,8 @@ public final class HostAllocator {
             len += nextSize;
         }
         if (start + len == top) {
-            // Adjacent to the bump top: return it to the fresh region instead.
+            // Adjacent to the bump top: return it to the fresh region, and to the budget.
+            budget.release(top - start);
             top = start;
             return;
         }

@@ -6,6 +6,7 @@ import com.jhuanglululu.billboard.message.MessageFormats;
 import com.jhuanglululu.billboard.placement.InstanceLifecycle;
 import com.jhuanglululu.billboard.placement.ViewerPosition;
 import com.jhuanglululu.billboard.runtime.BlockStateValidator;
+import com.jhuanglululu.billboard.runtime.ContentValidator;
 import com.jhuanglululu.wasm.Module;
 import java.util.HashSet;
 import java.util.Set;
@@ -26,15 +27,17 @@ public final class BukkitInstanceLifecycle implements InstanceLifecycle<RunningI
     private final AnimationScheduler scheduler;
     private final Function<String, Module> moduleLookup;
     private final BlockStateValidator validator;
+    private final ContentValidator content;
     private final LongSupplier memoryCapBytes;
 
     public BukkitInstanceLifecycle(Server server, AnimationScheduler scheduler,
             Function<String, Module> moduleLookup, BlockStateValidator validator,
-            LongSupplier memoryCapBytes) {
+            ContentValidator content, LongSupplier memoryCapBytes) {
         this.server = server;
         this.scheduler = scheduler;
         this.moduleLookup = moduleLookup;
         this.validator = validator;
+        this.content = content;
         this.memoryCapBytes = memoryCapBytes;
     }
 
@@ -45,7 +48,7 @@ public final class BukkitInstanceLifecycle implements InstanceLifecycle<RunningI
             throw new IllegalStateException("no loaded module for animation " + placement.animation());
         }
         RunningInstance instance = new RunningInstance(placement, ownerLabel(placement, viewers),
-                module, validator, memoryCapBytes.getAsLong());
+                module, validator, content, memoryCapBytes.getAsLong());
         instance.setViewers(resolve(viewers));
         scheduler.add(instance);
         return instance;
