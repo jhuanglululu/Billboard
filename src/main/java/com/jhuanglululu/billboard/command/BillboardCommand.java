@@ -40,22 +40,26 @@ public final class BillboardCommand {
     private final Server server;
     private final Supplier<BillboardConfig> config;
     private final Supplier<ReloadSummary> reload;
+    private final Supplier<int[]> exportRegistry;
 
     private BillboardCommand(DataStore data, Runnable save, Supplier<Set<String>> animationNames,
-            Server server, Supplier<BillboardConfig> config, Supplier<ReloadSummary> reload) {
+            Server server, Supplier<BillboardConfig> config, Supplier<ReloadSummary> reload,
+            Supplier<int[]> exportRegistry) {
         this.data = data;
         this.save = save;
         this.animationNames = animationNames;
         this.server = server;
         this.config = config;
         this.reload = reload;
+        this.exportRegistry = exportRegistry;
     }
 
     /** Register {@code /billboard} on the plugin's command lifecycle. */
     public static void register(JavaPlugin plugin, DataStore data, Runnable save,
             Supplier<Set<String>> animationNames, Server server, Supplier<BillboardConfig> config,
-            Supplier<ReloadSummary> reload) {
-        BillboardCommand cmd = new BillboardCommand(data, save, animationNames, server, config, reload);
+            Supplier<ReloadSummary> reload, Supplier<int[]> exportRegistry) {
+        BillboardCommand cmd = new BillboardCommand(data, save, animationNames, server, config,
+                reload, exportRegistry);
         plugin.getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event ->
                 event.registrar().register(cmd.build(), "Billboard animation control", List.of("bb")));
     }
@@ -87,6 +91,7 @@ public final class BillboardCommand {
                 .then(remove())
                 .then(resume())
                 .then(reload())
+                .then(export())
                 .then(list())
                 .then(listFilter("whitelist"))
                 .then(listFilter("blacklist"))
@@ -188,6 +193,32 @@ public final class BillboardCommand {
             ctx.getSource().getSender().sendMessage(Messages.withHover(line, hover.toString()));
             return Command.SINGLE_SUCCESS;
         });
+    }
+
+    // --- export registry ---
+
+    /**
+     * {@code /billboard export registry} — literal subcommands before any field, per the design's
+     * command-tree rule, so {@code export} can grow other targets later without moving anything.
+     */
+    private LiteralArgumentBuilder<CommandSourceStack> export() {
+        return Commands.literal("export").requires(this::isAdmin)
+                .then(Commands.literal("registry").executes(this::doExportRegistry));
+    }
+
+    private int doExportRegistry(CommandContext<CommandSourceStack> ctx) {
+        int[] counts = exportRegistry.get();
+        if (counts == null) {
+            Messages.send(ctx.getSource().getSender(), MessageFormats.PREFIX
+                    + "<red>Registry export failed — see the server log</red>");
+            return 0;
+        }
+        String line = MessageFormats.PREFIX + "<green>Exported <white>registry.rs</white> — <white>"
+                + counts[0] + "</white> block(s), <white>" + counts[1] + "</white> item(s)</green>";
+        String hover = "<gray>plugins/Billboard/registry.rs</gray>"
+                + "\n<gray>point $BILLBOARD_REGISTRY at it and rebuild the animation</gray>";
+        ctx.getSource().getSender().sendMessage(Messages.withHover(line, hover));
+        return Command.SINGLE_SUCCESS;
     }
 
     // --- log <on|off> (per-player mute for log-viewers) ---

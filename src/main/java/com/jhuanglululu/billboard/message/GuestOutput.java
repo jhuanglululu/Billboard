@@ -38,8 +38,19 @@ public final class GuestOutput {
         dispatch(MessageFormats.guestFail(animation, owner, message));
     }
 
+    /**
+     * A plugin-level notice (load-time validation), routed like guest output: console when enabled
+     * plus the effective log-viewers, with the detail in the hover per the detail-in-hover rule.
+     */
+    public void issue(String line, String hover) {
+        dispatch(Messages.withHover(line, hover));
+    }
+
     private void dispatch(String miniMessage) {
-        Component component = Messages.render(miniMessage);
+        dispatch(Messages.render(miniMessage));
+    }
+
+    private void dispatch(Component component) {
         if (consoleEnabled.getAsBoolean()) {
             server.getConsoleSender().sendMessage(component);
         }

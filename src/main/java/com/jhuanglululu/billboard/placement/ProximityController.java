@@ -51,6 +51,8 @@ public final class ProximityController<H> {
     private final Map<String, Map<UUID, Running<H>>> perPlayer = new HashMap<>();
 
     private BiConsumer<String, String> startFailureHandler = (animation, message) -> { };
+    // Placement keys load-time validation rejected; re-supplied on every reload.
+    private Supplier<Set<String>> skippedPlacements = Set::of;
 
     public ProximityController(PositionSource positions, InstanceLifecycle<H> lifecycle,
             DataStore data, Supplier<BillboardConfig> config) {
@@ -70,9 +72,23 @@ public final class ProximityController<H> {
     }
 
     /**
+     * The placements load-time validation skipped. They behave exactly as paused — no eligible
+     * viewers, so no instance is ever started — until a successful reload replaces the set.
+     */
+    public void setSkippedPlacements(Supplier<Set<String>> skippedPlacements) {
+        this.skippedPlacements = skippedPlacements;
+    }
+
+    /**
      * Starts an instance, catching any failure: a broken start pauses the animation (so the
      * next check computes no eligible viewers and never retries) and reports exactly once.
      * Returns {@code null} when the start failed, so the caller must not track it.
+     *
+     * <p><b>Last-resort defense only.</b> Everything that can be known without a player — the
+     * module parsing, its ABI handshake, the placement's animation and world — is checked when
+     * animations load, so reaching this catch means something changed underneath a validated
+     * load. It stays because a silent broken start would be worse, not because it is the report
+     * path a user should ever see.
      */
     private H tryStart(Placement placement, Set<ViewerPosition> viewers) {
         try {
@@ -95,7 +111,8 @@ public final class ProximityController<H> {
         for (Placement p : data.placements()) {
             livePlacements.add(p.key());
             boolean paused = data.existingAnimation(p.animation())
-                    .map(AnimationSettings::paused).orElse(false);
+                    .map(AnimationSettings::paused).orElse(false)
+                    || skippedPlacements.get().contains(p.key());
             List<ViewerPosition> eligible = paused ? List.of() : eligibleViewers(p, online, radius);
             if (p.type() == InstanceType.SHARED) {
                 driveShared(p, eligible, paused, currentTick, linger);

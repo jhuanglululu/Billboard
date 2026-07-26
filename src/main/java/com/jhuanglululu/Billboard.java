@@ -5,8 +5,11 @@ import com.jhuanglululu.billboard.command.BillboardCommand;
 import com.jhuanglululu.billboard.config.BillboardConfig;
 import com.jhuanglululu.billboard.config.ConfigLoader;
 import com.jhuanglululu.billboard.data.DataStore;
-import com.jhuanglululu.billboard.data.Placement;
+import com.jhuanglululu.billboard.load.AnimationLoader;
 import com.jhuanglululu.billboard.load.AnimationReloadDiff;
+import com.jhuanglululu.billboard.load.BukkitRegistrySource;
+import com.jhuanglululu.billboard.load.DataCheck;
+import com.jhuanglululu.billboard.load.LoadIssue;
 import com.jhuanglululu.billboard.load.ReloadSummary;
 import com.jhuanglululu.billboard.message.GuestOutput;
 import com.jhuanglululu.billboard.message.MessageFormats;
@@ -14,7 +17,9 @@ import com.jhuanglululu.billboard.message.Messages;
 import com.jhuanglululu.billboard.placement.BukkitPositionSource;
 import com.jhuanglululu.billboard.placement.ProximityController;
 import com.jhuanglululu.billboard.render.PaperBlockStateValidator;
+import com.jhuanglululu.billboard.render.PaperContentValidator;
 import com.jhuanglululu.billboard.runtime.BlockStateValidator;
+import com.jhuanglululu.billboard.runtime.ContentValidator;
 import com.jhuanglululu.billboard.scheduler.AnimationScheduler;
 import com.jhuanglululu.billboard.scheduler.BukkitInstanceLifecycle;
 import com.jhuanglululu.billboard.scheduler.RunningInstance;
@@ -28,9 +33,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
+import org.bukkit.World;
 import org.bukkit.plugin.java.JavaPlugin;
 
 /**
@@ -48,9 +56,10 @@ public final class Billboard extends JavaPlugin {
     private Path dataFile;
     private AnimationScheduler scheduler;
     private ProximityController<RunningInstance> controller;
+    private GuestOutput guestOutput;
     private long lifecycleTick;
-
-    private record Scan(Map<String, Module> modules, Map<String, Integer> hashes, List<String> errors) {}
+    // Placements load-time validation rejected: they behave as paused until a successful reload.
+    private final Set<String> skippedPlacements = new LinkedHashSet<>();
 
     @Override
     public void onLoad() {
@@ -62,20 +71,24 @@ public final class Billboard extends JavaPlugin {
     public void onEnable() {
         getDataFolder().mkdirs();
         loadConfig();
-        loadAnimations();
         loadData();
+        guestOutput = new GuestOutput(getServer(), () -> config.logViewers(),
+                () -> data.logMuted(), () -> config.consoleLog());
+        // Validate everything now: every animation and every placement is checked before a single
+        // player can be near one, so no failure waits for a proximity trigger.
+        validateAll(loadAnimations());
 
         BlockStateValidator validator = new PaperBlockStateValidator();
-        GuestOutput guestOutput = new GuestOutput(getServer(), () -> config.logViewers(),
-                () -> data.logMuted(), () -> config.consoleLog());
+        ContentValidator content = new PaperContentValidator();
         WorkerPoolSizer sizer = new WorkerPoolSizer(config.runtime().threads(),
                 Runtime.getRuntime().availableProcessors(), config.runtime().poolShrinkDelayTicks());
         scheduler = new AnimationScheduler(this, config.runtime().threads(), sizer,
                 () -> config.runtime().instructionBudget(), guestOutput);
 
         BukkitInstanceLifecycle lifecycle = new BukkitInstanceLifecycle(getServer(), scheduler,
-                animations::get, validator, () -> config.runtime().memoryCapBytes());
+                animations::get, validator, content, () -> config.runtime().memoryCapBytes());
         controller = new ProximityController<>(new BukkitPositionSource(getServer()), lifecycle, data, () -> config);
+        controller.setSkippedPlacements(() -> skippedPlacements);
 
         scheduler.setEndHandler(controller::forget);
         scheduler.setErrorHandler(this::pauseAnimation);
@@ -90,7 +103,7 @@ public final class Billboard extends JavaPlugin {
         }, interval, interval);
 
         BillboardCommand.register(this, data, this::saveData, animations::keySet, getServer(),
-                () -> config, this::reload);
+                () -> config, this::reload, this::exportRegistry);
 
         PacketEvents.getAPI().init();
         getLogger().info("Billboard enabled: " + animations.size() + " animation(s), "
@@ -122,79 +135,82 @@ public final class Billboard extends JavaPlugin {
         config = ConfigLoader.load(configFile);
     }
 
-    /** Scans and parses every {@code .wasm} in the animations folder; never throws. */
-    private Scan scan() {
-        Map<String, Module> modules = new HashMap<>();
-        Map<String, Integer> hashes = new HashMap<>();
-        List<String> errors = new ArrayList<>();
-        Path dir = getDataFolder().toPath().resolve("animations");
-        try {
-            Files.createDirectories(dir);
-        } catch (IOException e) {
-            errors.add("cannot create animations folder: " + e.getMessage());
-            return new Scan(modules, hashes, errors);
-        }
-        try (Stream<Path> files = Files.list(dir)) {
-            files.filter(p -> p.getFileName().toString().endsWith(".wasm")).sorted().forEach(file -> {
-                String name = file.getFileName().toString().replaceFirst("\\.wasm$", "");
-                try {
-                    byte[] bytes = Files.readAllBytes(file);
-                    modules.put(name, Module.parse(bytes));
-                    hashes.put(name, Arrays.hashCode(bytes));
-                } catch (IOException | WasmParseException e) {
-                    errors.add(name + ": " + e.getMessage());
-                }
-            });
-        } catch (IOException e) {
-            errors.add("cannot scan animations folder: " + e.getMessage());
-        }
-        return new Scan(modules, hashes, errors);
-    }
-
-    private void loadAnimations() {
-        Scan scan = scan();
+    /** Scans + validates the animations folder, replacing the loaded modules. */
+    private AnimationLoader.Result loadAnimations() {
+        AnimationLoader.Result result = AnimationLoader.load(
+                getDataFolder().toPath().resolve("animations"));
         animations.clear();
-        animations.putAll(scan.modules());
+        animations.putAll(result.modules());
         animationHashes.clear();
-        animationHashes.putAll(scan.hashes());
-        for (String error : scan.errors()) {
-            getLogger().severe("Animation load failed — " + error
-                    + " (paused; fix and /billboard reload then /billboard resume)");
+        animationHashes.putAll(result.hashes());
+        return result;
+    }
+
+    /**
+     * Reports every load-time issue loudly and records which placements are out of service. Runs at
+     * startup and after each reload: the animation issues come from {@link AnimationLoader}, the
+     * placement issues from cross-checking data.toml against the loaded animations and the server's
+     * worlds. This is the primary gate — nothing here is deferred to a proximity trigger.
+     */
+    private void validateAll(AnimationLoader.Result scan) {
+        Set<String> worlds = new LinkedHashSet<>();
+        for (World world : getServer().getWorlds()) {
+            worlds.add(world.getName());
+        }
+        List<LoadIssue> issues = new ArrayList<>(scan.issues());
+        issues.addAll(DataCheck.check(data.placements(), animations.keySet(), worlds,
+                name -> data.existingAnimation(name).orElse(null), Set.copyOf(data.groupIds())));
+        skippedPlacements.clear();
+        skippedPlacements.addAll(DataCheck.skippedKeys(issues));
+        for (LoadIssue issue : issues) {
+            guestOutput.issue(issue.line(), issue.hover());
+            getLogger().severe(issue.plain() + " \u2014 fix it and run /billboard reload");
         }
     }
 
-    /** Rescan the folder, restart changed/removed animations' instances, report a summary. */
+    /** Rescan + revalidate the folder, restart changed/removed animations' instances, report. */
     public ReloadSummary reload() {
-        Scan scan = scan();
-        AnimationReloadDiff diff = AnimationReloadDiff.compute(animationHashes, scan.hashes());
+        Map<String, Integer> before = new HashMap<>(animationHashes);
+        AnimationLoader.Result scan = loadAnimations();
+        AnimationReloadDiff diff = AnimationReloadDiff.compute(before, scan.hashes());
         for (String name : diff.stopped()) {
-            controller.stopInstancesOf(name); // changed/removed: stop (cleanup); proximity restarts if still present
+            controller.stopInstancesOf(name); // changed/removed: stop (cleanup); proximity restarts it
         }
-        animations.clear();
-        animations.putAll(scan.modules());
-        animationHashes.clear();
-        animationHashes.putAll(scan.hashes());
-        for (String removed : diff.removed()) {
-            data.animation(removed).setPaused(true); // no module -> keep it from instantiating
-        }
+        // A successful reload rebuilds the skip set from scratch, so a fixed file comes back to life.
+        validateAll(scan);
         saveData();
-        for (String error : scan.errors()) {
-            getLogger().severe("Reload — " + error);
+        List<String> errors = new ArrayList<>();
+        for (LoadIssue issue : scan.issues()) {
+            errors.add(issue.plain());
+        }
+        for (String key : skippedPlacements) {
+            errors.add("skipped placement " + key);
         }
         getLogger().info("Reloaded animations: +" + diff.added().size() + " ~" + diff.changed().size()
-                + " -" + diff.removed().size() + (scan.errors().isEmpty() ? "" : " (" + scan.errors().size() + " error(s))"));
-        return new ReloadSummary(diff, scan.errors());
+                + " -" + diff.removed().size()
+                + (errors.isEmpty() ? "" : " (" + errors.size() + " issue(s))"));
+        return new ReloadSummary(diff, errors);
+    }
+
+    /** {@code /billboard export registry}: writes the SDK's registry.rs, or null on failure. */
+    private int[] exportRegistry() {
+        Path target = getDataFolder().toPath().resolve("registry.rs");
+        try {
+            int[] counts = BukkitRegistrySource.write(target);
+            getLogger().info("Exported registry.rs: " + counts[0] + " block(s), "
+                    + counts[1] + " item(s)");
+            return counts;
+        } catch (IOException e) {
+            getLogger().severe("Registry export failed: " + e.getMessage());
+            return null;
+        }
     }
 
     private void loadData() {
         dataFile = getDataFolder().toPath().resolve("data.toml");
         data = DataStore.load(dataFile);
-        // Pause any placement whose animation failed to load, so the scheduler never starts it.
-        for (Placement p : data.placements()) {
-            if (!animations.containsKey(p.animation())) {
-                data.animation(p.animation()).setPaused(true);
-            }
-        }
+        // No lazy pausing here any more: validateAll decides what is out of service, per placement,
+        // and the paused flag keeps meaning only what it says — an animation an error stopped.
     }
 
     private void saveData() {
