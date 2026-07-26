@@ -69,6 +69,14 @@ final class RuntimeWasm {
             return this;
         }
 
+        Buf f64(double d) {
+            long bits = Double.doubleToRawLongBits(d);
+            for (int i = 0; i < 8; i++) {
+                o.write((int) ((bits >>> (8 * i)) & 0xFF));
+            }
+            return this;
+        }
+
         Buf name(String s) {
             byte[] u = s.getBytes(StandardCharsets.UTF_8);
             uleb(u.length);

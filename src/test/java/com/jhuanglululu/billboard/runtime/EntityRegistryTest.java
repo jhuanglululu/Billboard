@@ -15,7 +15,7 @@ class EntityRegistryTest {
     @Test
     void spawnInitializesIdentityRotationAndUnitScale() {
         EntityRegistry r = new EntityRegistry();
-        int id = r.spawn("minecraft:stone", 1.0, 2.0, 3.0);
+        int id = r.spawnBlockDisplay("minecraft:stone", 1.0, 2.0, 3.0);
         assertEquals(1, id);
         assertTrue(r.isAlive(id));
         assertArrayEquals(new double[] {1.0, 2.0, 3.0}, r.getPosition(id));
@@ -27,7 +27,7 @@ class EntityRegistryTest {
     @Test
     void settersUpdateHostTruth() {
         EntityRegistry r = new EntityRegistry();
-        int id = r.spawn("minecraft:stone", 0, 0, 0);
+        int id = r.spawnBlockDisplay("minecraft:stone", 0, 0, 0);
         r.setPosition(id, 4, 5, 6);
         r.setRotation(id, 0.1, 0.2, 0.3, 0.4);
         r.setScale(id, 2, 3, 4);
@@ -41,7 +41,7 @@ class EntityRegistryTest {
     @Test
     void despawnIsIdempotentAndReportsFirstOnly() {
         EntityRegistry r = new EntityRegistry();
-        int id = r.spawn("minecraft:stone", 0, 0, 0);
+        int id = r.spawnBlockDisplay("minecraft:stone", 0, 0, 0);
         assertTrue(r.despawn(id));  // first: was alive
         assertFalse(r.isAlive(id));
         assertFalse(r.despawn(id)); // second: already dead
@@ -50,7 +50,7 @@ class EntityRegistryTest {
     @Test
     void accessOnDeadOrUnknownEntityAborts() {
         EntityRegistry r = new EntityRegistry();
-        int id = r.spawn("minecraft:stone", 0, 0, 0);
+        int id = r.spawnBlockDisplay("minecraft:stone", 0, 0, 0);
         r.despawn(id);
         assertThrows(AnimationAbort.class, () -> r.setPosition(id, 1, 1, 1));
         assertThrows(AnimationAbort.class, () -> r.getScale(id));
@@ -61,9 +61,9 @@ class EntityRegistryTest {
     @Test
     void tracksAllSpawnedAndLiveIds() {
         EntityRegistry r = new EntityRegistry();
-        int a = r.spawn("minecraft:a", 0, 0, 0);
-        int b = r.spawn("minecraft:b", 0, 0, 0);
-        int c = r.spawn("minecraft:c", 0, 0, 0);
+        int a = r.spawnBlockDisplay("minecraft:a", 0, 0, 0);
+        int b = r.spawnBlockDisplay("minecraft:b", 0, 0, 0);
+        int c = r.spawnBlockDisplay("minecraft:c", 0, 0, 0);
         r.despawn(b);
         assertEquals(List.of(a, b, c), r.allSpawned());
         assertEquals(List.of(a, c), r.liveIds());

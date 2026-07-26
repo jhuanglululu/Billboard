@@ -13,8 +13,9 @@ import org.junit.jupiter.api.Test;
 /**
  * End-to-end smoke test on the real {@code rustc} artifact: instantiate with stub
  * host imports (each returns 0, none suspends) and call {@code _billboard_abi()},
- * asserting the ABI handshake returns 1. {@code _billboard_main} is deliberately not
- * called — it needs real host semantics, which come in a later step.
+ * asserting the ABI handshake returns 2. {@code _billboard_main} is deliberately not
+ * called here — it needs real host semantics, which
+ * {@code billboard.runtime.DemoIntegrationTest} supplies.
  */
 class InterpreterDemoSmokeTest {
 
@@ -26,7 +27,7 @@ class InterpreterDemoSmokeTest {
     }
 
     @Test
-    void billboardAbiReturnsOne() throws IOException {
+    void billboardAbiReturnsTwo() throws IOException {
         Module module = Module.parse(loadDemo());
 
         // Stub every billboard import with a no-op returning 0.
@@ -40,6 +41,6 @@ class InterpreterDemoSmokeTest {
 
         ExecResult r = inst.invoke(ctx, "_billboard_abi", new long[0], 1_000_000);
         assertInstanceOf(ExecResult.Completed.class, r, () -> "expected completion but was " + r);
-        assertEquals(1, (int) ((ExecResult.Completed) r).values()[0]);
+        assertEquals(2, (int) ((ExecResult.Completed) r).values()[0]);
     }
 }
