@@ -4,36 +4,63 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.jhuanglululu.wasm.Module;
+import com.jhuanglululu.wasmachine.runtime.MachineInstance;
 import com.jhuanglululu.wasmachine.runtime.SyncWasm;
 import com.jhuanglululu.wasmachine.runtime.SyncWasm.P;
 import org.junit.jupiter.api.Test;
 
-/** ABI v2 is purely additive, so the host accepts both 1 and 2 — and nothing else. */
+/**
+ * The ABI 3 handshake pair. The namespace split was one coordinated break, so there is no
+ * backwards compatibility left to keep: exactly one Billboard version is accepted, and the
+ * engine's own version is checked beside it — both at load time.
+ */
 class AbiVersionTest {
 
-    private static TickResult firstTick(int abiVersion) {
-        AnimationInstance instance = new AnimationInstance("abi",
-                Module.parse(SyncWasm.module(new P().log(0), abiVersion)), new RecordingRenderer(),
-                blockState -> true, (name, message) -> { }, 1 << 20);
-        return instance.tick(0, 1_000_000);
+    private static AnimationInstance instance(int billboardAbi, int engineAbi) {
+        return new AnimationInstance("abi",
+                Module.parse(SyncWasm.module(new P().log(0), engineAbi, billboardAbi)),
+                new RecordingRenderer(), blockState -> true, (name, message) -> { }, 1 << 20);
+    }
+
+    private static TickResult firstTick(int billboardAbi) {
+        return instance(billboardAbi, MachineInstance.ENGINE_ABI_VERSION).tick(0, 1_000_000);
     }
 
     @Test
-    void versionOneIsAccepted() {
-        assertInstanceOf(TickResult.Finished.class, firstTick(1));
+    void theCurrentVersionIsAccepted() {
+        assertInstanceOf(TickResult.Finished.class, firstTick(AnimationInstance.ABI_VERSION));
+        assertInstanceOf(TickResult.Finished.class, firstTick(3));
     }
 
     @Test
-    void versionTwoIsAccepted() {
-        assertInstanceOf(TickResult.Finished.class, firstTick(2));
+    void preSplitVersionsAreRejected() {
+        // A v1/v2 guest expects fork/sleep/realloc inside the "billboard" module, where this host
+        // no longer provides them: it could not link even if the handshake waved it through.
+        for (int old : new int[] {1, 2}) {
+            TickResult result = firstTick(old);
+            assertInstanceOf(TickResult.Errored.class, result);
+            assertTrue(((TickResult.Errored) result).message().contains("returned " + old),
+                    ((TickResult.Errored) result).message());
+        }
     }
 
     @Test
     void newerVersionIsRejected() {
-        TickResult result = firstTick(3);
+        TickResult result = firstTick(4);
         assertInstanceOf(TickResult.Errored.class, result);
         String message = ((TickResult.Errored) result).message();
-        assertTrue(message.contains("returned 3") && message.contains("1..2"),
-                "expected the handshake message to name both versions but was: " + message);
+        assertTrue(message.contains("_billboard_abi") && message.contains("returned 4")
+                        && message.contains("3..3"),
+                "expected the handshake message to name the export and versions but was: " + message);
+    }
+
+    @Test
+    void theEngineHandshakeIsCheckedToo() {
+        // Billboard layers its check on the engine's, so a guest built against a different engine
+        // ABI is refused with the engine's export named — before Billboard's own check matters.
+        AnimationInstance instance = instance(AnimationInstance.ABI_VERSION,
+                MachineInstance.ENGINE_ABI_VERSION + 1);
+        String message = instance.loadError().orElseThrow();
+        assertTrue(message.contains("_engine_abi"), message);
     }
 }

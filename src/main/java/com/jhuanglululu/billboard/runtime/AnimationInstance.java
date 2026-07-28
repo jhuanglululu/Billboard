@@ -19,6 +19,10 @@ import java.util.Optional;
  * {@link EntityRegistry} they mutate, the {@link Renderer} they drive, the validators they
  * enforce — and the <em>meaning</em> of the value {@code main} returns.
  *
+ * <p><b>Two namespaces since ABI 3.</b> Engine functions live in the {@code "engine"} module and
+ * are WASMachine's to implement; the {@code "billboard"} module is registered here. That split
+ * is what keeps a plugin feature from ever being an engine edit.
+ *
  * <p><b>Exit codes are plugin semantics.</b> The engine reports {@code Finished(int)} with the
  * raw {@code i32} task 0 returned; {@link #tick} maps it through {@link ExitCode#fromWire} and
  * kills the animation if it is out of range. Nothing else re-interprets an engine result.
@@ -27,20 +31,32 @@ import java.util.Optional;
  */
 public final class AnimationInstance {
 
-    /** The newest ABI version this host speaks; {@code _billboard_abi} may return any accepted one. */
-    public static final int ABI_VERSION = 2;
+    /**
+     * The Billboard ABI version this host speaks: what {@code _billboard_abi} must return.
+     * ABI 3 split the import namespaces, which is a hard break rather than an additive one —
+     * a v1/v2 guest asks for {@code fork}, {@code sleep} and friends inside the
+     * {@value #MODULE} module, where this host no longer provides them, so it cannot even
+     * link. There is therefore nothing to be compatible with: min and max are both 3.
+     */
+    public static final int ABI_VERSION = 3;
 
-    /** The oldest ABI version still accepted — v2 is purely additive over v1. */
-    public static final int MIN_ABI_VERSION = 1;
+    /** The oldest ABI version still accepted — the same one, for the reason above. */
+    public static final int MIN_ABI_VERSION = 3;
 
-    /** The single ABI 2 import module: engine and plugin imports share one namespace. */
+    /** The plugin's own import module: entities, sound, particles. */
     private static final String MODULE = "billboard";
 
-    /** The export task 0 runs every tick. */
-    private static final String ENTRY = "_billboard_main";
+    /** The engine's import module, owned by WASMachine: tasks, memory, sync, random, math. */
+    private static final String ENGINE_MODULE = "engine";
 
-    /** The handshake export checked at construction. */
+    /** The export task 0 runs every tick — engine-owned, since the engine invokes it. */
+    private static final String ENTRY = "_engine_main";
+
+    /** Billboard's handshake export, checked at construction beside the engine's. */
     private static final String ABI_EXPORT = "_billboard_abi";
+
+    /** The engine's handshake export; the version it must report is WASMachine's to state. */
+    private static final String ENGINE_ABI_EXPORT = "_engine_abi";
 
     private final Renderer renderer;
     private final BlockStateValidator validator;
@@ -87,8 +103,14 @@ public final class AnimationInstance {
         this.validator = validator;
         this.content = content;
         this.machine = new MachineInstance(module,
-                new MachineInstance.Config(name, MODULE, ENTRY,
-                        List.of(new MachineInstance.AbiCheck(ABI_EXPORT, MIN_ABI_VERSION, ABI_VERSION)),
+                new MachineInstance.Config(name, ENGINE_MODULE, ENTRY,
+                        // Both halves of the contract are checked at load time, never at first
+                        // use: the engine's, and Billboard's own on top of it.
+                        List.of(new MachineInstance.AbiCheck(ENGINE_ABI_EXPORT,
+                                        MachineInstance.ENGINE_ABI_VERSION,
+                                        MachineInstance.ENGINE_ABI_VERSION),
+                                new MachineInstance.AbiCheck(ABI_EXPORT,
+                                        MIN_ABI_VERSION, ABI_VERSION)),
                         memoryCapBytes, instanceSeed),
                 logSink,
                 Map.of(MODULE, buildImports()));
@@ -117,9 +139,10 @@ public final class AnimationInstance {
 
     /**
      * The reason this instance is unusable, if construction already decided it — today only a
-     * failed {@code _billboard_abi} handshake. Load-time validation builds an instance purely to
-     * ask this, so the check a server start performs is exactly the one a real start performs;
-     * empty means the module is fit to run.
+     * failed handshake, either the engine's {@code _engine_abi} or Billboard's own
+     * {@code _billboard_abi}. Load-time validation builds an instance purely to ask this, so the
+     * check a server start performs is exactly the one a real start performs; empty means the
+     * module is fit to run.
      */
     public Optional<String> loadError() {
         return machine.loadError();
@@ -251,9 +274,9 @@ public final class AnimationInstance {
     }
 
     /**
-     * ABI v2 entity imports: the four new kinds and their attributes. Every attribute op goes
-     * through the {@link EntityRegistry}, which kills the animation if the id is the wrong kind
-     * for it, before the renderer is told anything.
+     * The entity imports beyond block displays: the other four kinds and their attributes. Every
+     * attribute op goes through the {@link EntityRegistry}, which kills the animation if the id
+     * is the wrong kind for it, before the renderer is told anything.
      */
     private void addEntityImports(Map<String, HostFunction> m) {
         m.put("spawn_item_display", (ctx, a) -> {
@@ -394,7 +417,7 @@ public final class AnimationInstance {
     }
 
     /**
-     * ABI v2 sound and particle imports. Sound <em>ids</em> are never validated (the documented
+     * Sound and particle imports. Sound <em>ids</em> are never validated (the documented
      * exception), but a category outside {@code 0..9} is a guest bug and kills; particle block
      * states and items are validated like everywhere else.
      */

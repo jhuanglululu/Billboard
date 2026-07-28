@@ -12,9 +12,11 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Load-time validation of one animation module: it parses, it exports a {@code _billboard_main} the
- * scheduler can actually call, it instantiates far enough to have its exports resolved, and
- * {@code _billboard_abi()} returns a version this host speaks (1 or 2).
+ * Load-time validation of one animation module: it parses, it exports an {@code _engine_main} the
+ * scheduler can actually call, it instantiates far enough to have its exports resolved, and both
+ * handshakes answer — the engine's {@code _engine_abi()} and Billboard's {@code _billboard_abi()},
+ * which since the ABI 3 namespace split must report exactly
+ * {@link AnimationInstance#ABI_VERSION}.
  *
  * <p>This runs at server start and on {@code /billboard reload}, <em>before</em> any player can be
  * near a placement, which is the whole point: a broken {@code .wasm} used to surface as a failed
@@ -31,8 +33,12 @@ public final class ModuleCheck {
     /** Memory cap for the throwaway validation instance; nothing allocates during the handshake. */
     private static final long VALIDATION_MEMORY_CAP = 1 << 16;
 
-    /** The entry point the scheduler invokes every tick: {@code _billboard_main() -> i32}. */
-    private static final String MAIN = "_billboard_main";
+    /**
+     * The entry point the scheduler invokes every tick: {@code _engine_main() -> i32}. The name
+     * is the engine's since ABI 3 — the engine is what invokes it — but the signature check
+     * stays here, because the {@code i32} it returns is a Billboard exit code.
+     */
+    private static final String MAIN = "_engine_main";
 
     private ModuleCheck() {}
 
