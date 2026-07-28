@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.jhuanglululu.wasmachine.runtime.GuestAbort;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -52,9 +53,9 @@ class EntityRegistryTest {
         EntityRegistry r = new EntityRegistry();
         int id = r.spawnBlockDisplay("minecraft:stone", 0, 0, 0);
         r.despawn(id);
-        assertThrows(AnimationAbort.class, () -> r.setPosition(id, 1, 1, 1));
-        assertThrows(AnimationAbort.class, () -> r.getScale(id));
-        assertThrows(AnimationAbort.class, () -> r.getPosition(999));
+        assertThrows(GuestAbort.class, () -> r.setPosition(id, 1, 1, 1));
+        assertThrows(GuestAbort.class, () -> r.getScale(id));
+        assertThrows(GuestAbort.class, () -> r.getPosition(999));
         assertFalse(r.isAlive(999)); // unknown id is simply not alive (no abort)
     }
 

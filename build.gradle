@@ -28,6 +28,10 @@ repositories {
 
 dependencies {
     compileOnly 'io.papermc.paper:paper-api:26.2.build.+'
+    // The WASM interpreter + task runtime, built from the GitHub repo by the source
+    // dependency in settings.gradle (tracks main; a pushed engine commit is picked up on
+    // --refresh-dependencies). Shaded into the plugin jar unrelocated: our own namespace.
+    implementation('com.jhuanglululu:wasmachine') { version { branch = 'main' } }
     // Shaded + relocated (see shadowJar) so the jar is self-contained.
     implementation 'com.github.retrooper:packetevents-spigot:2.13.0'
     implementation 'com.electronwill.night-config:toml:3.8.3'
@@ -36,6 +40,8 @@ dependencies {
     // Paper is compileOnly for the plugin, but the tests need the real MiniMessage it bundles to
     // hold PaperContentValidator to the same parser the renderer will use at run time.
     testImplementation 'io.papermc.paper:paper-api:26.2.build.+'
+    // The hand-rolled wasm emitters and the shared runtime driver live with the engine.
+    testImplementation(testFixtures('com.jhuanglululu:wasmachine')) { version { branch = 'main' } }
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.2'
 }
 

@@ -30,7 +30,7 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEn
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerParticle;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSoundEffect;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
-import com.jhuanglululu.billboard.runtime.AnimationAbort;
+import com.jhuanglululu.wasmachine.runtime.GuestAbort;
 import com.jhuanglululu.billboard.runtime.EntityKind;
 import com.jhuanglululu.billboard.runtime.EntityRegistry;
 import com.jhuanglululu.billboard.runtime.EntityTweens;
@@ -527,7 +527,7 @@ public final class PacketEventsRenderer implements Renderer {
             case ParticleSpec.Named n -> {
                 ParticleType<?> type = ParticleTypes.getByName(n.name());
                 if (type == null) {
-                    throw new AnimationAbort("unknown particle \"" + n.name() + "\"");
+                    throw new GuestAbort("unknown particle \"" + n.name() + "\"");
                 }
                 yield new Particle<>(type);
             }
@@ -780,7 +780,7 @@ public final class PacketEventsRenderer implements Renderer {
             return SpigotConversionUtil.fromBukkitItemStack(
                     Bukkit.getItemFactory().createItemStack(item));
         } catch (IllegalArgumentException e) {
-            throw new AnimationAbort("invalid item \"" + item + "\": " + e.getMessage());
+            throw new GuestAbort("invalid item \"" + item + "\": " + e.getMessage());
         }
     }
 

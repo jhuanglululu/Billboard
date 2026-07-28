@@ -23,7 +23,7 @@ import com.jhuanglululu.billboard.runtime.ContentValidator;
 import com.jhuanglululu.billboard.scheduler.AnimationScheduler;
 import com.jhuanglululu.billboard.scheduler.BukkitInstanceLifecycle;
 import com.jhuanglululu.billboard.scheduler.RunningInstance;
-import com.jhuanglululu.billboard.scheduler.WorkerPoolSizer;
+import com.jhuanglululu.wasmachine.runtime.WorkerPoolSizer;
 import com.jhuanglululu.wasm.Module;
 import com.jhuanglululu.wasm.WasmParseException;
 import io.github.retrooper.packetevents.factory.spigot.SpigotPacketEventsBuilder;

@@ -1,1 +1,12 @@
 rootProject.name = 'Billboard'
+
+// The engine is consumed from its GitHub repo (see context/plans/3-v2.1-wasmachine.md):
+// a source dependency clones and builds com.jhuanglululu:wasmachine from git, so the
+// committed state never points at a local path. Engine changes must be pushed before
+// this build sees them; during coordinated cross-repo work, substitute locally with
+//   ./gradlew build --include-build ../../WASMachine/WASMachine
+sourceControl {
+    gitRepository(uri('https://github.com/jhuanglululu/WASMachine.git')) {
+        producesModule('com.jhuanglululu:wasmachine')
+    }
+}

@@ -3,8 +3,9 @@ package com.jhuanglululu.billboard.runtime;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.jhuanglululu.billboard.runtime.SyncWasm.P;
 import com.jhuanglululu.wasm.Module;
+import com.jhuanglululu.wasmachine.runtime.SyncWasm;
+import com.jhuanglululu.wasmachine.runtime.SyncWasm.P;
 import org.junit.jupiter.api.Test;
 
 /** ABI v2 is purely additive, so the host accepts both 1 and 2 — and nothing else. */

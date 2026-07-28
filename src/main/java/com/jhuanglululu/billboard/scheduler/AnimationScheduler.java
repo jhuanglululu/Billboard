@@ -3,6 +3,7 @@ package com.jhuanglululu.billboard.scheduler;
 import com.jhuanglululu.billboard.message.GuestOutput;
 import com.jhuanglululu.billboard.runtime.ExitCode;
 import com.jhuanglululu.billboard.runtime.TickResult;
+import com.jhuanglululu.wasmachine.runtime.WorkerPoolSizer;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;

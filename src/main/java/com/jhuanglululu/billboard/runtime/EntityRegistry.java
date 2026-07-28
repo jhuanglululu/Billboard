@@ -1,5 +1,6 @@
 package com.jhuanglululu.billboard.runtime;
 
+import com.jhuanglululu.wasmachine.runtime.GuestAbort;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -136,10 +137,10 @@ public final class EntityRegistry {
     private Entity live(int id, String op) {
         Entity e = entities.get(id);
         if (e == null) {
-            throw new AnimationAbort(op + " on unknown entity id " + id);
+            throw new GuestAbort(op + " on unknown entity id " + id);
         }
         if (!e.alive) {
-            throw new AnimationAbort(op + " on despawned entity id " + id);
+            throw new GuestAbort(op + " on despawned entity id " + id);
         }
         return e;
     }
@@ -152,14 +153,14 @@ public final class EntityRegistry {
                 return e;
             }
         }
-        throw new AnimationAbort(op + " on entity id " + id + ", which is " + e.kind.labelWithArticle()
+        throw new GuestAbort(op + " on entity id " + id + ", which is " + e.kind.labelWithArticle()
                 + " — " + op + " applies to " + describe(kinds));
     }
 
     private Entity display(int id, String op) {
         Entity e = live(id, op);
         if (!e.kind.isDisplay()) {
-            throw new AnimationAbort(op + " on entity id " + id + ", which is "
+            throw new GuestAbort(op + " on entity id " + id + ", which is "
                     + e.kind.labelWithArticle() + " — " + op + " applies to display entities");
         }
         return e;
@@ -330,7 +331,7 @@ public final class EntityRegistry {
 
     private static int requirePart(int part, String op) {
         if (part < 0 || part >= POSE_PARTS) {
-            throw new AnimationAbort(op + ": pose part " + part + " out of range 0.."
+            throw new GuestAbort(op + ": pose part " + part + " out of range 0.."
                     + (POSE_PARTS - 1));
         }
         return part;
@@ -338,7 +339,7 @@ public final class EntityRegistry {
 
     private static int requireSlot(int slot) {
         if (slot < 0 || slot >= EQUIPMENT_SLOTS) {
-            throw new AnimationAbort("set_equipment: slot " + slot + " out of range 0.."
+            throw new GuestAbort("set_equipment: slot " + slot + " out of range 0.."
                     + (EQUIPMENT_SLOTS - 1));
         }
         return slot;
@@ -348,12 +349,12 @@ public final class EntityRegistry {
      * Marks {@code id} despawned. Returns {@code true} if it was alive (the caller
      * should then tell the renderer), {@code false} if it was already dead (idempotent).
      *
-     * @throws AnimationAbort if the id was never spawned
+     * @throws GuestAbort if the id was never spawned
      */
     public boolean despawn(int id) {
         Entity e = entities.get(id);
         if (e == null) {
-            throw new AnimationAbort("despawn on unknown entity id " + id);
+            throw new GuestAbort("despawn on unknown entity id " + id);
         }
         if (!e.alive) {
             return false;

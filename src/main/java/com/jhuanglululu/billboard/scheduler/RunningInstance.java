@@ -6,7 +6,7 @@ import com.jhuanglululu.billboard.render.PacketEventsRenderer;
 import com.jhuanglululu.billboard.runtime.AnimationInstance;
 import com.jhuanglululu.billboard.runtime.BlockStateValidator;
 import com.jhuanglululu.billboard.runtime.ContentValidator;
-import com.jhuanglululu.billboard.runtime.LogSink;
+import com.jhuanglululu.wasmachine.runtime.LogSink;
 import com.jhuanglululu.billboard.runtime.TickResult;
 import com.jhuanglululu.wasm.Module;
 import java.util.ArrayList;
