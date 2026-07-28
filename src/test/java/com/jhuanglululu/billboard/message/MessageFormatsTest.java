@@ -1,6 +1,7 @@
 package com.jhuanglululu.billboard.message;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -26,6 +27,30 @@ class MessageFormatsTest {
         assertTrue(line.contains("EVERYONE"));
         assertTrue(line.contains("logged"));
         assertTrue(line.contains("assembling panel"));
+    }
+
+    @Test
+    void pauseHintNamesThePlacementAndTheExactResumeCommandForEachFlag() {
+        assertTrue(MessageFormats.pauseHint("demo", "spot1").contains("demo/spot1"));
+        assertTrue(MessageFormats.pauseHint("demo", "spot1").contains("is paused"));
+
+        // Animation-level: resume takes the animation, because every placement of it is stopped.
+        String animation = MessageFormats.pauseHintDetail("demo", "spot1", true);
+        assertTrue(animation.contains("/billboard resume demo"));
+        assertFalse(animation.contains("/billboard resume spot1"));
+
+        // Placement-level: resume takes the placement id, and only this spot is affected.
+        String placement = MessageFormats.pauseHintDetail("demo", "spot1", false);
+        assertTrue(placement.contains("/billboard resume spot1"));
+        assertFalse(placement.contains("/billboard resume demo"));
+    }
+
+    @Test
+    void pauseHintEscapesUntrustedNames() {
+        String line = MessageFormats.pauseHint("<b>evil", "<click:run_command:'/op'>x");
+        assertTrue(line.contains("\\<b>evil"));
+        assertTrue(line.contains("\\<click:run_command:'/op'>x"));
+        assertTrue(MessageFormats.pauseHintDetail("<b>evil", "id", true).contains("\\<b>evil"));
     }
 
     @Test

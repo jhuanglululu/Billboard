@@ -18,6 +18,7 @@ import com.mojang.brigadier.suggestion.SuggestionProvider;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -27,8 +28,8 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
 /**
- * The {@code /billboard} Brigadier command tree (spawn/remove/resume/list/whitelist/blacklist/
- * group/set), following the design's rule that literal subcommands precede fields. Handlers
+ * The {@code /billboard} Brigadier command tree (spawn/remove/pause/resume/list/whitelist/
+ * blacklist/group/set), following the design's rule that literal subcommands precede fields. Handlers
  * mutate the {@link DataStore} (persisted via the save callback); the proximity controller
  * reacts on its next check, so commands need no direct instance handles.
  */
@@ -89,6 +90,7 @@ public final class BillboardCommand {
                 .requires(this::rootAccess)
                 .then(spawn())
                 .then(remove())
+                .then(pause())
                 .then(resume())
                 .then(reload())
                 .then(export())
@@ -160,18 +162,66 @@ public final class BillboardCommand {
                     })));
     }
 
-    // --- resume <animation> ---
+    // --- pause|resume <animation | placement-id> ---
 
+    /**
+     * {@code /billboard pause <animation|placement-id>} — deliberately disable something that
+     * works. The animation form sets the very flag an error sets (one concept, one switch); the
+     * placement form sets the per-placement flag, so the animation's other placements keep running.
+     */
+    private LiteralArgumentBuilder<CommandSourceStack> pause() {
+        return Commands.literal("pause").requires(this::isAdmin).then(
+            Commands.argument("target", StringArgumentType.word()).suggests(pauseTargetSuggestions())
+                    .executes(ctx -> setPaused(ctx, true)));
+    }
+
+    /** {@code /billboard resume <animation|placement-id>} — clears whichever flag the word names. */
     private LiteralArgumentBuilder<CommandSourceStack> resume() {
         return Commands.literal("resume").requires(this::isAdmin).then(
-            Commands.argument("animation", StringArgumentType.word()).suggests(animationSuggestions())
-                    .executes(ctx -> {
-                        String animation = StringArgumentType.getString(ctx, "animation");
-                        data.animation(animation).setPaused(false);
-                        save.run();
-                        reply(ctx, "<green>Cleared the error-pause on <white>" + esc(animation) + "</white></green>");
-                        return Command.SINGLE_SUCCESS;
-                    }));
+            Commands.argument("target", StringArgumentType.word()).suggests(pauseTargetSuggestions())
+                    .executes(ctx -> setPaused(ctx, false)));
+    }
+
+    private int setPaused(CommandContext<CommandSourceStack> ctx, boolean paused) {
+        String target = StringArgumentType.getString(ctx, "target");
+        PauseTarget resolved = PauseTarget.resolve(target, knownAnimations(), data.placements());
+        String verb = paused ? "Paused" : "Resumed";
+        switch (resolved.kind()) {
+            case ANIMATION -> {
+                data.animation(resolved.animation()).setPaused(paused);
+                save.run();
+                reply(ctx, "<green>" + verb + " animation <white>" + esc(resolved.animation())
+                        + "</white>" + (paused ? "" : " (error-pause cleared)") + "</green>");
+            }
+            case PLACEMENT -> {
+                Placement p = data.placement(resolved.animation(), resolved.id()).orElseThrow();
+                data.putPlacement(p.withPaused(paused));
+                save.run();
+                reply(ctx, "<green>" + verb + " placement <white>" + esc(p.key()) + "</white></green>");
+            }
+            case AMBIGUOUS -> {
+                String line = MessageFormats.PREFIX + "<red>Placement id <white>" + esc(resolved.id())
+                        + "</white> is used by " + resolved.candidates().size() + " animations</red>";
+                StringBuilder hover = new StringBuilder("<gray>name the animation instead, or one of:</gray>");
+                for (String key : resolved.candidates()) {
+                    hover.append("\n<white>").append(esc(key)).append("</white>");
+                }
+                ctx.getSource().getSender().sendMessage(Messages.withHover(line, hover.toString()));
+            }
+            case UNKNOWN -> reply(ctx, "<red>No animation or placement named <white>" + esc(target)
+                    + "</white></red>");
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * Every animation a pause/resume may name: the loaded modules plus any with persisted settings
+     * — an animation whose file broke keeps its paused flag and must stay resumable.
+     */
+    private Set<String> knownAnimations() {
+        Set<String> names = new LinkedHashSet<>(animationNames.get());
+        names.addAll(data.animationNames());
+        return names;
     }
 
     // --- reload ---
@@ -267,7 +317,8 @@ public final class BillboardCommand {
     private void listAll(CommandContext<CommandSourceStack> ctx) {
         reply(ctx, MessageFormats.PREFIX + "<gray>placements:</gray>");
         for (Placement p : data.placements()) {
-            boolean paused = data.existingAnimation(p.animation()).map(AnimationSettings::paused).orElse(false);
+            boolean paused = p.paused()
+                    || data.existingAnimation(p.animation()).map(AnimationSettings::paused).orElse(false);
             String line = "<white>" + esc(p.key()) + "</white> <gray>(" + p.type().wire() + ", "
                     + p.visibility().wire() + (paused ? ", <red>paused</red>" : "") + ")</gray>";
             String hover = "world " + esc(p.world()) + " at " + fmt(p.x()) + " " + fmt(p.y()) + " " + fmt(p.z());
@@ -286,7 +337,8 @@ public final class BillboardCommand {
                 continue;
             }
             reply(ctx, "  <white>" + esc(p.id()) + "</white> <gray>(" + p.type().wire() + ", "
-                    + p.visibility().wire() + ")</gray> <dark_gray>viewers: " + eligibleNames(p) + "</dark_gray>");
+                    + p.visibility().wire() + (p.paused() ? ", <red>paused</red>" : "")
+                    + ")</gray> <dark_gray>viewers: " + eligibleNames(p) + "</dark_gray>");
         }
     }
 
@@ -456,6 +508,18 @@ public final class BillboardCommand {
                     builder.suggest(p.id());
                 }
             }
+            return builder.buildFuture();
+        };
+    }
+
+    /** Both things pause/resume accept, animations first, ids deduplicated across animations. */
+    private SuggestionProvider<CommandSourceStack> pauseTargetSuggestions() {
+        return (ctx, builder) -> {
+            Set<String> words = knownAnimations();
+            for (Placement p : data.placements()) {
+                words.add(p.id());
+            }
+            words.forEach(builder::suggest);
             return builder.buildFuture();
         };
     }

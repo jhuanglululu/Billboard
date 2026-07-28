@@ -5,6 +5,7 @@ import com.jhuanglululu.billboard.command.BillboardCommand;
 import com.jhuanglululu.billboard.config.BillboardConfig;
 import com.jhuanglululu.billboard.config.ConfigLoader;
 import com.jhuanglululu.billboard.data.DataStore;
+import com.jhuanglululu.billboard.data.Placement;
 import com.jhuanglululu.billboard.load.AnimationLoader;
 import com.jhuanglululu.billboard.load.AnimationReloadDiff;
 import com.jhuanglululu.billboard.load.BukkitRegistrySource;
@@ -16,6 +17,7 @@ import com.jhuanglululu.billboard.message.MessageFormats;
 import com.jhuanglululu.billboard.message.Messages;
 import com.jhuanglululu.billboard.placement.BukkitPositionSource;
 import com.jhuanglululu.billboard.placement.ProximityController;
+import com.jhuanglululu.billboard.placement.ViewerPosition;
 import com.jhuanglululu.billboard.render.PaperBlockStateValidator;
 import com.jhuanglululu.billboard.render.PaperContentValidator;
 import com.jhuanglululu.billboard.runtime.BlockStateValidator;
@@ -39,6 +41,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.bukkit.World;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
 /**
@@ -89,6 +92,7 @@ public final class Billboard extends JavaPlugin {
                 animations::get, validator, content, () -> config.runtime().memoryCapBytes());
         controller = new ProximityController<>(new BukkitPositionSource(getServer()), lifecycle, data, () -> config);
         controller.setSkippedPlacements(() -> skippedPlacements);
+        controller.setPauseHintSink(this::sendPauseHint);
 
         scheduler.setEndHandler(controller::forget);
         scheduler.setErrorHandler(this::pauseAnimation);
@@ -178,6 +182,7 @@ public final class Billboard extends JavaPlugin {
         }
         // A successful reload rebuilds the skip set from scratch, so a fixed file comes back to life.
         validateAll(scan);
+        controller.clearPauseHints(); // reload may change why something is paused: say it again
         saveData();
         List<String> errors = new ArrayList<>();
         for (LoadIssue issue : scan.issues()) {
@@ -215,6 +220,26 @@ public final class Billboard extends JavaPlugin {
 
     private void saveData() {
         data.save(dataFile);
+    }
+
+    /**
+     * Tells one player standing near a paused placement why nothing is there, once. Only admins
+     * and config log-viewers hear it — everyone else has no command to act on it with — and the
+     * {@code false} return keeps the controller from marking it delivered to the rest.
+     */
+    private boolean sendPauseHint(Placement placement, ViewerPosition viewer, boolean animationLevel) {
+        Player player = getServer().getPlayer(viewer.uuid());
+        if (player == null) {
+            return false;
+        }
+        if (!player.hasPermission(BillboardCommand.PERMISSION)
+                && !config.logViewers().contains(player.getName())) {
+            return false;
+        }
+        player.sendMessage(Messages.withHover(
+                MessageFormats.pauseHint(placement.animation(), placement.id()),
+                MessageFormats.pauseHintDetail(placement.animation(), placement.id(), animationLevel)));
+        return true;
     }
 
     /** Pause an animation after an error and report it once (loud: console MiniMessage + log). */

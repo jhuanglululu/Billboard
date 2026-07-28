@@ -35,4 +35,29 @@ public final class MessageFormats {
         return PREFIX + "<red><white>" + escape(animation) + "</white> owned by <yellow>" + escape(owner)
                 + "</yellow> failed: " + escape(message) + "</red>";
     }
+
+    /**
+     * {@code [Billboard] <animation>/<id> is paused} — the one-time nudge an admin or log-viewer
+     * gets on walking into range of a placement that will never start. Without it a pause is
+     * silent at the only moment it matters: standing in front of the empty spot.
+     */
+    public static String pauseHint(String animation, String id) {
+        return PREFIX + "<white>" + escape(animation) + "/" + escape(id) + "</white> <red>is paused</red>";
+    }
+
+    /**
+     * The hover detail for {@link #pauseHint}: which flag holds it and the exact command that
+     * clears that flag — {@code resume <animation>} for the animation-level pause (which stops
+     * every placement of it), {@code resume <id>} for this placement alone.
+     */
+    public static String pauseHintDetail(String animation, String id, boolean animationLevel) {
+        if (animationLevel) {
+            return "<gray>the animation <white>" + escape(animation)
+                    + "</white> is paused, so none of its placements run</gray>"
+                    + "\n<gray>resume with <white>/billboard resume " + escape(animation) + "</white></gray>";
+        }
+        return "<gray>this placement is paused; other placements of <white>" + escape(animation)
+                + "</white> still run</gray>"
+                + "\n<gray>resume with <white>/billboard resume " + escape(id) + "</white></gray>";
+    }
 }

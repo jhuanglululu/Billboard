@@ -20,7 +20,7 @@ import java.util.TreeMap;
  *
  * <p>Schema (arrays of tables, so animation/group names never collide with TOML paths):
  * <pre>
- * [[placements]] animation, id, world, x, y, z, type, visibility
+ * [[placements]] animation, id, world, x, y, z, type, visibility, paused
  * [[animations]] name, paused, whitelist = [...], blacklist = [...]
  * [[groups]]     id, players = [...]
  * </pre>
@@ -67,6 +67,14 @@ public final class DataStore {
     /** Settings for {@code animation} only if one already exists. */
     public Optional<AnimationSettings> existingAnimation(String animation) {
         return Optional.ofNullable(animations.get(animation));
+    }
+
+    /**
+     * Every animation name with a persisted settings entry — including one whose {@code .wasm}
+     * no longer loads, which is exactly the animation someone needs to name in {@code resume}.
+     */
+    public Collection<String> animationNames() {
+        return animations.keySet();
     }
 
     // --- groups ---
@@ -119,7 +127,8 @@ public final class DataStore {
                     c.get("animation"), c.get("id"), c.get("world"),
                     num(c, "x"), num(c, "y"), num(c, "z"),
                     InstanceType.fromWire(c.get("type")),
-                    VisibilityMode.fromWire(c.get("visibility")));
+                    VisibilityMode.fromWire(c.get("visibility")),
+                    c.getOrElse("paused", false)); // absent in files written before per-placement pause
             placements.put(p.key(), p);
         }
         List<Config> animationList = config.getOrElse("animations", List.of());
@@ -148,6 +157,7 @@ public final class DataStore {
             c.set("z", p.z());
             c.set("type", p.type().wire());
             c.set("visibility", p.visibility().wire());
+            c.set("paused", p.paused());
             placementList.add(c);
         }
         config.set("placements", placementList);

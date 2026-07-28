@@ -82,6 +82,48 @@ class DataStoreTest {
     }
 
     @Test
+    void placementPauseFlagRoundTripsIndependentlyOfSiblingsAndOfTheAnimationFlag(@TempDir Path dir) {
+        Path file = dir.resolve("data.toml");
+        DataStore out = new DataStore();
+        out.putPlacement(new Placement("demo", "spot1", "world", 0, 64, 0,
+                InstanceType.SHARED, VisibilityMode.EVERYONE));
+        out.putPlacement(new Placement("demo", "spot2", "world", 9, 64, 0,
+                InstanceType.SHARED, VisibilityMode.EVERYONE));
+        out.putPlacement(out.placement("demo", "spot1").orElseThrow().withPaused(true));
+        out.save(file);
+
+        DataStore in = DataStore.load(file);
+        assertTrue(in.placement("demo", "spot1").orElseThrow().paused());
+        assertFalse(in.placement("demo", "spot2").orElseThrow().paused());
+        assertFalse(in.animation("demo").paused(), "pausing one placement must not pause the animation");
+
+        // and it survives being cleared again
+        in.putPlacement(in.placement("demo", "spot1").orElseThrow().withPaused(false));
+        in.save(file);
+        assertFalse(DataStore.load(file).placement("demo", "spot1").orElseThrow().paused());
+    }
+
+    @Test
+    void placementWrittenBeforePerPlacementPauseLoadsUnpaused(@TempDir Path dir) throws Exception {
+        // data.toml files predate the flag; a missing key must read as "not paused", not blow up.
+        Path file = dir.resolve("data.toml");
+        java.nio.file.Files.writeString(file, """
+                [[placements]]
+                animation = "demo"
+                id = "spot1"
+                world = "world"
+                x = 0.0
+                y = 64.0
+                z = 0.0
+                type = "shared"
+                visibility = "everyone"
+                """);
+
+        Placement p = DataStore.load(file).placement("demo", "spot1").orElseThrow();
+        assertFalse(p.paused());
+    }
+
+    @Test
     void loadingAbsentFileYieldsEmptyStore(@TempDir Path dir) {
         DataStore store = DataStore.load(dir.resolve("missing.toml"));
         assertTrue(store.placements().isEmpty());

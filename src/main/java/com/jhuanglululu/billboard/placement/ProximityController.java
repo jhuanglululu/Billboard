@@ -20,8 +20,8 @@ import java.util.function.Supplier;
  * The proximity state machine: on each check it starts an instance when an eligible player
  * comes into range, keeps it while anyone eligible is near, and — when the last one leaves
  * — lets it <em>linger</em> (still running) for {@code linger-ticks} before stopping it, so
- * a player jittering at the border never thrashes restarts. A pause on the animation stops
- * its instances immediately.
+ * a player jittering at the border never thrashes restarts. A pause — on the animation or on the
+ * single placement — stops its instances immediately, and nudges nearby admins once.
  *
  * <p>{@code shared} placements have one instance for the whole eligible audience;
  * {@code per_player} placements have one instance per eligible player. All server contact
@@ -54,6 +54,10 @@ public final class ProximityController<H> {
     // Placement keys load-time validation rejected; re-supplied on every reload.
     private Supplier<Set<String>> skippedPlacements = Set::of;
 
+    private PauseHintSink pauseHints = (placement, viewer, animationLevel) -> false;
+    // placement key -> players already nudged about it; dropped as soon as it is unpaused.
+    private final Map<String, Set<UUID>> hinted = new HashMap<>();
+
     public ProximityController(PositionSource positions, InstanceLifecycle<H> lifecycle,
             DataStore data, Supplier<BillboardConfig> config) {
         this.positions = positions;
@@ -77,6 +81,23 @@ public final class ProximityController<H> {
      */
     public void setSkippedPlacements(Supplier<Set<String>> skippedPlacements) {
         this.skippedPlacements = skippedPlacements;
+    }
+
+    /**
+     * Where the paused-placement nudge goes. It rides the existing proximity check — the same
+     * pass that decides an instance should exist already knows who is standing where — so no
+     * extra scheduled task exists just to notice someone approaching a paused placement.
+     */
+    public void setPauseHintSink(PauseHintSink pauseHints) {
+        this.pauseHints = pauseHints;
+    }
+
+    /**
+     * Forget who has been nudged about what, so every eligible player is told again. Called on
+     * {@code /billboard reload}, which may well have changed why a placement is paused.
+     */
+    public void clearPauseHints() {
+        hinted.clear();
     }
 
     /**
@@ -110,9 +131,16 @@ public final class ProximityController<H> {
         Set<String> livePlacements = new HashSet<>();
         for (Placement p : data.placements()) {
             livePlacements.add(p.key());
-            boolean paused = data.existingAnimation(p.animation())
-                    .map(AnimationSettings::paused).orElse(false)
-                    || skippedPlacements.get().contains(p.key());
+            boolean animationPaused = data.existingAnimation(p.animation())
+                    .map(AnimationSettings::paused).orElse(false);
+            // Three ways to be out of service, one behaviour: instantiate nothing. The command
+            // flags additionally nudge nearby admins; a load-time skip already reported itself.
+            boolean paused = animationPaused || p.paused() || skippedPlacements.get().contains(p.key());
+            if (animationPaused || p.paused()) {
+                nudge(p, online, radius, animationPaused);
+            } else {
+                hinted.remove(p.key()); // resumed: a later pause nudges again
+            }
             List<ViewerPosition> eligible = paused ? List.of() : eligibleViewers(p, online, radius);
             if (p.type() == InstanceType.SHARED) {
                 driveShared(p, eligible, paused, currentTick, linger);
@@ -121,6 +149,23 @@ public final class ProximityController<H> {
             }
         }
         stopOrphaned(livePlacements);
+    }
+
+    /**
+     * Offers the pause nudge to everyone in range of {@code p} who has not had it yet. Range, not
+     * eligibility: the admin debugging a paused placement is often not one of its viewers, and the
+     * visibility filter is about who sees the animation, not who is told why there is none.
+     */
+    private void nudge(Placement p, Iterable<ViewerPosition> online, double radius, boolean animationLevel) {
+        Set<UUID> alreadyTold = hinted.computeIfAbsent(p.key(), k -> new HashSet<>());
+        for (ViewerPosition v : online) {
+            if (alreadyTold.contains(v.uuid()) || !Eligibility.inRange(p, v, radius)) {
+                continue;
+            }
+            if (pauseHints.hint(p, v, animationLevel)) {
+                alreadyTold.add(v.uuid());
+            }
+        }
     }
 
     private List<ViewerPosition> eligibleViewers(Placement p, Iterable<ViewerPosition> online, double radius) {
@@ -205,6 +250,7 @@ public final class ProximityController<H> {
     }
 
     private void stopOrphaned(Set<String> livePlacements) {
+        hinted.keySet().retainAll(livePlacements);
         shared.entrySet().removeIf(e -> {
             if (livePlacements.contains(e.getKey())) {
                 return false;
