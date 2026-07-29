@@ -129,4 +129,19 @@ class DataStoreTest {
         assertTrue(store.placements().isEmpty());
         assertTrue(store.groupIds().isEmpty());
     }
+
+    @Test
+    void savedTomlIsFlushLeft(@TempDir Path dir) throws java.io.IOException {
+        Path file = dir.resolve("data.toml");
+        DataStore out = new DataStore();
+        out.putPlacement(new Placement("demo", "spot1", "world", 1, 2, 3,
+                InstanceType.SHARED, VisibilityMode.EVERYONE));
+        out.group("vips").add("alice");
+        out.save(file);
+
+        for (String line : java.nio.file.Files.readAllLines(file)) {
+            assertFalse(line.startsWith(" ") || line.startsWith("\t"),
+                    "indented line in data.toml: \"" + line + "\"");
+        }
+    }
 }

@@ -2,8 +2,16 @@ package com.jhuanglululu.billboard.data;
 
 import com.electronwill.nightconfig.core.Config;
 import com.electronwill.nightconfig.core.file.CommentedFileConfig;
+import com.electronwill.nightconfig.core.io.IndentStyle;
+import com.electronwill.nightconfig.toml.TomlFormat;
+import com.electronwill.nightconfig.toml.TomlWriter;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.io.Writer;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -113,10 +121,16 @@ public final class DataStore {
     }
 
     public void save(Path file) {
-        try (CommentedFileConfig config = CommentedFileConfig.builder(file)
-                .preserveInsertionOrder().sync().build()) {
-            writeTo(config);
-            config.save();
+        // Written through an explicit TomlWriter so nested table keys stay flush-left
+        // (the default writer tab-indents them; data.toml should diff and read plainly).
+        Config config = TomlFormat.newConfig(LinkedHashMap::new);
+        writeTo(config);
+        TomlWriter writer = new TomlWriter();
+        writer.setIndent(IndentStyle.NONE);
+        try (Writer out = Files.newBufferedWriter(file)) {
+            writer.write(config, out);
+        } catch (IOException e) {
+            throw new UncheckedIOException("failed to write " + file, e);
         }
     }
 
