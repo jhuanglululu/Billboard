@@ -3,6 +3,7 @@ package com.jhuanglululu.billboard.scheduler;
 import com.jhuanglululu.billboard.message.GuestOutput;
 import com.jhuanglululu.billboard.runtime.ExitCode;
 import com.jhuanglululu.billboard.runtime.TickResult;
+import com.jhuanglululu.billboard.stats.CaptureControl;
 import com.jhuanglululu.billboard.stats.CaptureOrchestrator;
 import com.jhuanglululu.billboard.stats.CaptureReport;
 import com.jhuanglululu.billboard.stats.PluginStats;
@@ -29,7 +30,7 @@ import org.bukkit.plugin.Plugin;
  * the main thread: finished/kept/repeat/errored per the exit-code contract, and an error
  * pauses the whole animation.
  */
-public final class AnimationScheduler {
+public final class AnimationScheduler implements CaptureControl {
 
     private final Plugin plugin;
     private final WorkerPoolSizer sizer;
@@ -84,6 +85,7 @@ public final class AnimationScheduler {
     }
 
     public void add(RunningInstance instance) {
+        instance.markStarted(currentTick);
         instances.add(instance);
     }
 
@@ -109,10 +111,22 @@ public final class AnimationScheduler {
      * @param windowTicks how long to capture
      * @param onReport    receives the report on the main thread when the window closes
      */
+    @Override
     public CaptureOrchestrator.CaptureStart startCapture(String target, String animation,
             String placementId, int windowTicks, Consumer<CaptureReport> onReport) {
         return captures.start(target, animation, placementId, windowTicks, currentTick,
                 instances, onReport);
+    }
+
+    /**
+     * Closes the capture running on {@code target} early and delivers its report to whoever
+     * started it.
+     *
+     * @return false if no capture was running on that target
+     */
+    @Override
+    public boolean stopCapture(String target) {
+        return captures.stop(target, currentTick);
     }
 
     /** The instant plugin-wide view, minus the placement count only the data store knows. */
@@ -194,7 +208,10 @@ public final class AnimationScheduler {
                 instances.remove(instance);
                 instance.releaseRuntimeKeepEntities();
             }
-            case REPEAT -> instance.restart();
+            case REPEAT -> {
+                instance.restart();
+                instance.markStarted(currentTick); // a repeat is a new run, and a new uptime
+            }
         }
     }
 

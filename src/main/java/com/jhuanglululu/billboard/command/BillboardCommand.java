@@ -9,9 +9,9 @@ import com.jhuanglululu.billboard.data.VisibilityMode;
 import com.jhuanglululu.billboard.load.ReloadSummary;
 import com.jhuanglululu.billboard.message.MessageFormats;
 import com.jhuanglululu.billboard.message.Messages;
+import com.jhuanglululu.billboard.stats.CaptureControl;
 import com.jhuanglululu.billboard.stats.CaptureOrchestrator;
 import com.jhuanglululu.billboard.stats.CaptureReport;
-import com.jhuanglululu.billboard.stats.CaptureStarter;
 import com.jhuanglululu.billboard.stats.PluginStats;
 import com.jhuanglululu.billboard.stats.StatsFormats;
 import com.mojang.brigadier.Command;
@@ -53,12 +53,12 @@ public final class BillboardCommand {
     private final Supplier<ReloadSummary> reload;
     private final Supplier<int[]> exportRegistry;
     private final Supplier<PluginStats> pluginStats;
-    private final CaptureStarter captures;
+    private final CaptureControl captures;
 
     private BillboardCommand(DataStore data, Runnable save, Supplier<Set<String>> animationNames,
             Server server, Supplier<BillboardConfig> config, Supplier<ReloadSummary> reload,
             Supplier<int[]> exportRegistry, Supplier<PluginStats> pluginStats,
-            CaptureStarter captures) {
+            CaptureControl captures) {
         this.data = data;
         this.save = save;
         this.animationNames = animationNames;
@@ -74,7 +74,7 @@ public final class BillboardCommand {
     public static void register(JavaPlugin plugin, DataStore data, Runnable save,
             Supplier<Set<String>> animationNames, Server server, Supplier<BillboardConfig> config,
             Supplier<ReloadSummary> reload, Supplier<int[]> exportRegistry,
-            Supplier<PluginStats> pluginStats, CaptureStarter captures) {
+            Supplier<PluginStats> pluginStats, CaptureControl captures) {
         BillboardCommand cmd = new BillboardCommand(data, save, animationNames, server, config,
                 reload, exportRegistry, pluginStats, captures);
         plugin.getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event ->
@@ -355,6 +355,13 @@ public final class BillboardCommand {
                             Messages.withHover(line.visible(), line.hover()));
                     return Command.SINGLE_SUCCESS;
                 })
+                // Literal before field, per the tree rule — which does mean an animation
+                // literally named "stop" cannot be targeted here. Renaming the file is a cheaper
+                // fix than a grammar that guesses.
+                .then(Commands.literal("stop").then(
+                        Commands.argument("target", StringArgumentType.word())
+                                .suggests(pauseTargetSuggestions())
+                                .executes(this::stopCapture)))
                 .then(Commands.argument("target", StringArgumentType.word())
                         .suggests(pauseTargetSuggestions())
                         .executes(ctx -> startCapture(ctx, DEFAULT_CAPTURE_SECONDS))
@@ -372,13 +379,7 @@ public final class BillboardCommand {
             return Command.SINGLE_SUCCESS;
         }
         PauseTarget resolved = PauseTarget.resolve(target, knownAnimations(), data.placements());
-        if (resolved.kind() == PauseTarget.Kind.AMBIGUOUS) {
-            replyAmbiguous(ctx, resolved);
-            return Command.SINGLE_SUCCESS;
-        }
-        if (resolved.kind() == PauseTarget.Kind.UNKNOWN) {
-            reply(ctx, "<red>No animation or placement named <white>" + esc(target)
-                    + "</white></red>");
+        if (!resolveForCapture(ctx, target, resolved)) {
             return Command.SINGLE_SUCCESS;
         }
         // An animation covers all its placements; a placement id narrows to the one.
@@ -386,19 +387,55 @@ public final class BillboardCommand {
         String placementId = resolved.kind() == PauseTarget.Kind.PLACEMENT ? resolved.id() : null;
 
         int windowTicks = seconds * StatsFormats.TICKS_PER_SECOND;
-        CaptureOrchestrator.CaptureStart start = captures.start(target, animation, placementId,
-                windowTicks, reportTo(ctx));
+        CaptureOrchestrator.CaptureStart start = captures.startCapture(target, animation,
+                placementId, windowTicks, reportTo(ctx));
         if (!start.started()) {
             send(ctx, StatsFormats.captureAlreadyRunning(target, start.remainingTicks()));
             return Command.SINGLE_SUCCESS;
         }
-        send(ctx, StatsFormats.captureStarted(target, seconds, start));
+        reply(ctx, StatsFormats.captureStarted(target, seconds, start.armed()));
         if (start.armed() == 0) {
             // Loud, immediately: otherwise the user waits out the whole window for a report that
             // can only say "nothing ran".
             send(ctx, StatsFormats.noInstances(target, seconds));
         }
         return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * {@code /billboard stats stop <target>} — end the window now and report what it saw. The
+     * report goes to whoever started the capture, so the {@code [click]} on their own capturing
+     * line lands back with them.
+     */
+    private int stopCapture(CommandContext<CommandSourceStack> ctx) {
+        String target = StringArgumentType.getString(ctx, "target");
+        PauseTarget resolved = PauseTarget.resolve(target, knownAnimations(), data.placements());
+        if (!resolveForCapture(ctx, target, resolved)) {
+            return Command.SINGLE_SUCCESS;
+        }
+        if (!captures.stopCapture(target)) {
+            reply(ctx, StatsFormats.noCaptureRunning(target));
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * Reports the resolution failures {@code stats} and {@code stats stop} share.
+     *
+     * @return whether the word resolved to something capturable
+     */
+    private boolean resolveForCapture(CommandContext<CommandSourceStack> ctx, String target,
+            PauseTarget resolved) {
+        if (resolved.kind() == PauseTarget.Kind.AMBIGUOUS) {
+            replyAmbiguous(ctx, resolved);
+            return false;
+        }
+        if (resolved.kind() == PauseTarget.Kind.UNKNOWN) {
+            reply(ctx, "<red>No animation or placement named <white>" + esc(target)
+                    + "</white></red>");
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -427,7 +464,7 @@ public final class BillboardCommand {
         StatsFormats.Line header = StatsFormats.reportHeader(report);
         audience.sendMessage(Messages.withHover(header.visible(), header.hover()));
         for (CaptureReport.InstanceStats instance : report.instances()) {
-            StatsFormats.Line line = StatsFormats.instanceLine(instance);
+            StatsFormats.Line line = StatsFormats.instanceLine(instance, report.windowTicks());
             audience.sendMessage(Messages.withHover(line.visible(), line.hover()));
         }
     }

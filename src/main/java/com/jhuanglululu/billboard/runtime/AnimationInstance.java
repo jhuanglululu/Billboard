@@ -179,6 +179,16 @@ public final class AnimationInstance {
         return machine.startCapture(ticks);
     }
 
+    /**
+     * Closes an armed capture early, keeping whatever it sampled. The summary that results is
+     * marked incomplete, because it is: it covers less than the window asked for.
+     *
+     * @return false if no capture was armed
+     */
+    public boolean stopCapture() {
+        return machine.stopCapture();
+    }
+
     /** Ticks left on the armed capture, or 0 when none is armed. */
     public long captureRemainingTicks() {
         return machine.captureRemainingTicks();

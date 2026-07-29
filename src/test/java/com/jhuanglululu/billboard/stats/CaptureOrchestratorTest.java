@@ -20,6 +20,7 @@ class CaptureOrchestratorTest {
         private final String placementId;
         Integer armedFor;               // the ticks it was armed with; null = never armed
         CaptureSummary result;
+        boolean stopped;
 
         FakeSource(String animation, String placementId) {
             this.animation = animation;
@@ -43,7 +44,7 @@ class CaptureOrchestratorTest {
 
         @Override
         public Optional<StatsSnapshot> stats() {
-            return Optional.of(new StatsSnapshot(0, 0, 0, 0, 1, 0, 0, 0, 0));
+            return Optional.of(new StatsSnapshot(0, 16 * 1024 * 1024, 1, 0));
         }
 
         @Override
@@ -52,12 +53,7 @@ class CaptureOrchestratorTest {
         }
 
         @Override
-        public int totalEntitySpawns() {
-            return 0;
-        }
-
-        @Override
-        public int restarts() {
+        public long startTick() {
             return 0;
         }
 
@@ -71,6 +67,17 @@ class CaptureOrchestratorTest {
         }
 
         @Override
+        public boolean stopCapture() {
+            if (armedFor == null || stopped) {
+                return false;
+            }
+            // What the engine does: close the window, keep the samples, mark it incomplete.
+            stopped = true;
+            result = STOPPED_EARLY;
+            return true;
+        }
+
+        @Override
         public Optional<CaptureSummary> captureResult() {
             return Optional.ofNullable(result);
         }
@@ -78,6 +85,9 @@ class CaptureOrchestratorTest {
 
     private static final CaptureSummary SAMPLED =
             new CaptureSummary(30, true, 10, 40, 600, 30, 2);
+
+    private static final CaptureSummary STOPPED_EARLY =
+            new CaptureSummary(60, false, 10, 40, 1200, 60, 4);
 
     @Test
     void aTargetWithNoInstancesStillArmsAndThenReportsNoSamples() {
@@ -129,6 +139,41 @@ class CaptureOrchestratorTest {
         assertEquals(List.of("spot1", "spot2"),
                 reports.get(0).instances().stream().map(CaptureReport.InstanceStats::label).toList(),
                 "each instance appears once, in arming order");
+    }
+
+    @Test
+    void stoppingEarlyClosesTheWindowAndReportsWhatItSaw() {
+        CaptureOrchestrator orchestrator = new CaptureOrchestrator();
+        List<CaptureReport> reports = new ArrayList<>();
+        FakeSource source = new FakeSource("demo", "spot1");
+        List<FakeSource> live = List.of(source);
+
+        orchestrator.start("demo", "demo", null, 200, 0, live, reports::add);
+        for (long tick = 1; tick <= 60; tick++) {
+            orchestrator.tick(tick, live);
+        }
+        assertTrue(reports.isEmpty(), "a 200-tick window is nowhere near done at tick 60");
+
+        assertTrue(orchestrator.stop("demo", 60));
+        assertTrue(source.stopped, "the armed instance is told to close its window");
+
+        assertEquals(1, reports.size());
+        CaptureReport report = reports.get(0);
+        assertTrue(report.stopped());
+        assertEquals(200, report.windowTicks(), "what was asked for");
+        assertEquals(60, report.elapsedTicks(), "what it actually ran");
+        assertTrue(report.partial(), "a window cut short is not a complete one");
+        assertEquals(1200L, report.windowInstructions(), "the samples it did take are kept");
+
+        assertTrue(orchestrator.idle());
+        assertFalse(orchestrator.stop("demo", 61), "nothing left to stop");
+        assertEquals(1, reports.size(), "and no second report");
+    }
+
+    @Test
+    void stoppingSomethingThatIsNotRunningReportsNothing() {
+        CaptureOrchestrator orchestrator = new CaptureOrchestrator();
+        assertFalse(orchestrator.stop("demo", 0));
     }
 
     @Test

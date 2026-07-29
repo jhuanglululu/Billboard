@@ -14,11 +14,15 @@ import java.util.List;
  * the same tick. Summing means therefore gives instructions per tick <em>for the animation</em>;
  * averaging them would flatter an animation that runs in twenty copies.
  *
- * @param target      what was captured, as the user named it
- * @param windowTicks the length the capture was armed for
- * @param instances   one entry per instance that was armed, in the order they were armed
+ * @param target       what was captured, as the user named it
+ * @param windowTicks  the length the capture was armed for
+ * @param elapsedTicks how long it actually ran — shorter than {@code windowTicks} only when it
+ *                     was stopped early
+ * @param stopped      whether someone ended the window before its deadline
+ * @param instances    one entry per instance that was armed, in the order they were armed
  */
-public record CaptureReport(String target, long windowTicks, List<InstanceStats> instances) {
+public record CaptureReport(String target, long windowTicks, long elapsedTicks, boolean stopped,
+        List<InstanceStats> instances) {
 
     public CaptureReport {
         instances = List.copyOf(instances);
@@ -27,16 +31,15 @@ public record CaptureReport(String target, long windowTicks, List<InstanceStats>
     /**
      * One instance's contribution.
      *
-     * @param label       how to name this instance: the owner for {@code per_player}, otherwise
-     *                    the placement id
-     * @param capture     what its window saw; a window that took no samples is still reported
-     * @param snapshot    its run totals and gauges as of the end of the window
+     * @param label        how to name this instance: the owner for {@code per_player}, otherwise
+     *                     the placement id
+     * @param capture      what its window saw; a window that took no samples is still reported
+     * @param snapshot     its live gauges as of the end of the window
      * @param liveEntities entities standing at the end of the window
-     * @param totalSpawns  entities spawned over the run
-     * @param restarts     self-restarts over the run
+     * @param uptimeTicks  ticks since this run began, derived from the scheduler's start stamp
      */
     public record InstanceStats(String label, CaptureSummary capture, StatsSnapshot snapshot,
-            int liveEntities, int totalSpawns, int restarts) {
+            int liveEntities, long uptimeTicks) {
 
         /** Whether this instance produced any sample at all. */
         public boolean sampled() {
@@ -75,12 +78,13 @@ public record CaptureReport(String target, long windowTicks, List<InstanceStats>
     }
 
     /**
-     * The highest true memory watermark any one instance reached over its whole run. Deliberately
-     * the snapshot's watermark and not the window's sampled peak: an allocation that rose and fell
-     * inside a single tick never appears in a sample.
+     * The instances' window peaks added up. Nothing outside a capture is measured any more, so a
+     * sampled end-of-tick peak is the only peak there is — and like the mean it is summed, because
+     * the question is what the animation costs. It over-states if the peaks did not fall on the
+     * same tick, which is the honest direction for a ceiling.
      */
     public long peakMemoryBytes() {
-        return instances.stream().mapToLong(i -> i.snapshot().memoryPeakBytes()).max().orElse(0L);
+        return instances.stream().mapToLong(i -> i.capture().memoryPeakBytes()).sum();
     }
 
     /** Live entities across every instance at the end of the window. */

@@ -34,11 +34,12 @@ public interface StatsSource {
     /** Entities this instance has standing right now. */
     int liveEntities();
 
-    /** Entities it has spawned over the whole run, dead ones included. */
-    int totalEntitySpawns();
-
-    /** Times this instance restarted itself ({@code ExitCode.Repeat}) during the run. */
-    int restarts();
+    /**
+     * The tick this instance's current run began on, so a report can derive its age. Uptime is
+     * Billboard's to know: the engine keeps no counter for it, and the scheduler already stamps
+     * every instance it starts.
+     */
+    long startTick();
 
     /**
      * Arms a capture over the next {@code ticks} ticks.
@@ -46,6 +47,13 @@ public interface StatsSource {
      * @return false if this instance cannot be armed — no interpreter, or one already armed
      */
     boolean startCapture(int ticks);
+
+    /**
+     * Closes an armed capture early, keeping its samples.
+     *
+     * @return false if nothing was armed on this instance
+     */
+    boolean stopCapture();
 
     /** The most recent finished capture, including one closed early by the instance ending. */
     Optional<MachineInstance.CaptureSummary> captureResult();

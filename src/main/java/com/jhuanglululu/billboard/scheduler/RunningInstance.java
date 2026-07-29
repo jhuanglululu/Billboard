@@ -43,8 +43,8 @@ public final class RunningInstance implements StatsSource {
     private MachineInstance.StatsSnapshot lastSnapshot;
     private MachineInstance.CaptureSummary lastCapture;
     private int lastLiveEntities;
-    private int lastTotalSpawns;
-    private int restarts;
+    // The tick this run began on, stamped by the scheduler; uptime is the difference from now.
+    private long startTick;
 
     public RunningInstance(Placement placement, String ownerLabel, Module module,
             BlockStateValidator validator, ContentValidator content, long memoryCapBytes) {
@@ -84,12 +84,19 @@ public final class RunningInstance implements StatsSource {
         renderer.setViewers(players);
     }
 
-    /** Restart from scratch (ExitCode.Repeat): clear entities and rebuild the interpreter. */
+    /**
+     * Restart from scratch (ExitCode.Repeat): clear entities and rebuild the interpreter. The run
+     * this reports on is the new one, so the caller re-stamps {@link #markStarted}.
+     */
     public void restart() {
         remember();
-        restarts++;
         renderer.destroyAll();
         instance = build();
+    }
+
+    /** Records the tick this run began on (the scheduler knows it; the instance does not). */
+    public void markStarted(long tick) {
+        this.startTick = tick;
     }
 
     /** Release the interpreter but keep the rendered entities visible (ExitCode.Keep). */
@@ -120,7 +127,6 @@ public final class RunningInstance implements StatsSource {
         lastSnapshot = instance.stats();
         instance.captureResult().ifPresent(summary -> lastCapture = summary);
         lastLiveEntities = instance.registry().liveIds().size();
-        lastTotalSpawns = instance.registry().allSpawned().size();
     }
 
     /** Drain and return the guest log messages buffered since the last drain (main thread). */
@@ -173,18 +179,18 @@ public final class RunningInstance implements StatsSource {
     }
 
     @Override
-    public int totalEntitySpawns() {
-        return instance != null ? instance.registry().allSpawned().size() : lastTotalSpawns;
-    }
-
-    @Override
-    public int restarts() {
-        return restarts;
+    public long startTick() {
+        return startTick;
     }
 
     @Override
     public boolean startCapture(int ticks) {
         return instance != null && instance.startCapture(ticks);
+    }
+
+    @Override
+    public boolean stopCapture() {
+        return instance != null && instance.stopCapture();
     }
 
     @Override

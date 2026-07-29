@@ -13,8 +13,8 @@ class CaptureReportTest {
 
     private static final long MIB = 1024 * 1024;
 
-    private static StatsSnapshot snapshot(long runPeakBytes, long totalInstructions) {
-        return new StatsSnapshot(0, 0, runPeakBytes, 16 * MIB, 1, 0, 100, totalInstructions, 0);
+    private static StatsSnapshot snapshot(long usedBytes, int liveTasks) {
+        return new StatsSnapshot(usedBytes, 16 * MIB, liveTasks, 0);
     }
 
     /**
@@ -28,10 +28,10 @@ class CaptureReportTest {
         CaptureSummary b = new CaptureSummary(2, false, 50, 150, 200, 3 * MIB, 2 * MIB);
         CaptureSummary none = new CaptureSummary(0, false, 0, 0, 0, 0, 0);
 
-        CaptureReport report = new CaptureReport("demo", 80, List.of(
-                new CaptureReport.InstanceStats("alice", a, snapshot(2 * MIB, 9000), 3, 5, 0),
-                new CaptureReport.InstanceStats("bob", b, snapshot(5 * MIB, 400), 1, 1, 2),
-                new CaptureReport.InstanceStats("spot3", none, snapshot(0, 0), 0, 0, 0)));
+        CaptureReport report = new CaptureReport("demo", 80, 80, false, List.of(
+                new CaptureReport.InstanceStats("alice", a, snapshot(2 * MIB, 3), 3, 254),
+                new CaptureReport.InstanceStats("bob", b, snapshot(5 * MIB, 1), 1, 40),
+                new CaptureReport.InstanceStats("spot3", none, snapshot(0, 0), 0, 5)));
 
         assertTrue(report.anySamples());
         assertEquals(2, report.sampledInstances());
@@ -43,16 +43,16 @@ class CaptureReportTest {
         assertEquals(1200L, report.windowInstructions());
         // 1 MiB (4 MiB over 4 samples) + 1.5 MiB (3 MiB over 2 samples)
         assertEquals(2.5 * MIB, report.meanMemoryBytes());
-        // the highest run watermark, not the highest window sample
-        assertEquals(5 * MIB, report.peakMemoryBytes());
+        // 1 MiB + 2 MiB: the window peaks added up, the only peaks that still exist
+        assertEquals(3 * MIB, report.peakMemoryBytes());
         assertEquals(4, report.liveEntities());
     }
 
     @Test
     void aWindowThatSampledNothingReportsNothingRatherThanZeroes() {
         CaptureSummary none = new CaptureSummary(0, false, 0, 0, 0, 0, 0);
-        CaptureReport report = new CaptureReport("demo", 200, List.of(
-                new CaptureReport.InstanceStats("spot1", none, snapshot(0, 0), 0, 0, 0)));
+        CaptureReport report = new CaptureReport("demo", 200, 200, false, List.of(
+                new CaptureReport.InstanceStats("spot1", none, snapshot(0, 0), 0, 0)));
 
         assertFalse(report.anySamples());
         assertEquals(0, report.sampledInstances());

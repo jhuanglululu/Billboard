@@ -30,8 +30,7 @@ import java.util.function.Consumer;
 public final class CaptureOrchestrator {
 
     /** A snapshot substituted for an instance whose interpreter is gone before collection. */
-    private static final StatsSnapshot NO_SNAPSHOT =
-            new StatsSnapshot(0, 0, 0, 0, 0, 0, 0, 0, 0);
+    private static final StatsSnapshot NO_SNAPSHOT = new StatsSnapshot(0, 0, 0, 0);
 
     /** An empty, incomplete window: what an instance that never ran a captured tick reports. */
     private static final CaptureSummary NO_CAPTURE =
@@ -44,16 +43,8 @@ public final class CaptureOrchestrator {
      * @param remainingTicks ticks left on the window that was already running (0 when started)
      * @param armed          instances armed right now — {@code 0} is the case that earns the
      *                       loud "nothing is running this" warning
-     * @param instant        each armed instance's gauges at the moment of arming, for immediate
-     *                       feedback while the window runs
      */
-    public record CaptureStart(boolean started, long remainingTicks, int armed,
-            List<CaptureReport.InstanceStats> instant) {
-
-        public CaptureStart {
-            instant = List.copyOf(instant);
-        }
-    }
+    public record CaptureStart(boolean started, long remainingTicks, int armed) {}
 
     /** One armed window: who it covers, when it ends, and where the report goes. */
     private static final class Session {
@@ -61,6 +52,7 @@ public final class CaptureOrchestrator {
         final String animation;
         final String placementId; // null = every placement of the animation
         final long windowTicks;
+        final long startTick;
         final long deadlineTick;
         final Consumer<CaptureReport> onReport;
         // Report order is arming order; the identity set answers "already armed?" without
@@ -70,12 +62,13 @@ public final class CaptureOrchestrator {
         final Set<StatsSource> armedSet = Collections.newSetFromMap(new IdentityHashMap<>());
 
         Session(String target, String animation, String placementId, long windowTicks,
-                long deadlineTick, Consumer<CaptureReport> onReport) {
+                long startTick, Consumer<CaptureReport> onReport) {
             this.target = target;
             this.animation = animation;
             this.placementId = placementId;
             this.windowTicks = windowTicks;
-            this.deadlineTick = deadlineTick;
+            this.startTick = startTick;
+            this.deadlineTick = startTick + windowTicks;
             this.onReport = onReport;
         }
 
@@ -107,19 +100,17 @@ public final class CaptureOrchestrator {
             long currentTick, Collection<? extends StatsSource> live, Consumer<CaptureReport> onReport) {
         Session running = sessions.get(target);
         if (running != null) {
-            return new CaptureStart(false, Math.max(0, running.deadlineTick - currentTick), 0, List.of());
+            return new CaptureStart(false, Math.max(0, running.deadlineTick - currentTick), 0);
         }
         Session session = new Session(target, animation, placementId, windowTicks,
-                currentTick + windowTicks, onReport);
+                currentTick, onReport);
         sessions.put(target, session);
-        List<CaptureReport.InstanceStats> instant = new ArrayList<>();
         for (StatsSource s : live) {
             if (session.covers(s) && s.startCapture(windowTicks)) {
                 session.arm(s);
-                instant.add(row(s));
             }
         }
-        return new CaptureStart(true, 0, session.armed.size(), instant);
+        return new CaptureStart(true, 0, session.armed.size());
     }
 
     /** Ticks left on the capture running for {@code target}, or 0 if none is. */
@@ -156,9 +147,27 @@ public final class CaptureOrchestrator {
             // has not closed yet.
             if (currentTick > session.deadlineTick) {
                 sessions.remove(session.target);
-                session.onReport.accept(collect(session));
+                session.onReport.accept(collect(session, currentTick, false));
             }
         }
+    }
+
+    /**
+     * Ends the window on {@code target} now, keeping every sample taken so far, and delivers the
+     * report to whoever started it — the report belongs to the request, not to whoever cut it short.
+     *
+     * @return false if nothing was running on that target
+     */
+    public boolean stop(String target, long currentTick) {
+        Session session = sessions.remove(target);
+        if (session == null) {
+            return false;
+        }
+        for (StatsSource s : session.armed) {
+            s.stopCapture();
+        }
+        session.onReport.accept(collect(session, currentTick, true));
+        return true;
     }
 
     /** Drops every armed window without reporting (plugin disable). */
@@ -166,18 +175,19 @@ public final class CaptureOrchestrator {
         sessions.clear();
     }
 
-    private static CaptureReport collect(Session session) {
+    private static CaptureReport collect(Session session, long currentTick, boolean stopped) {
         List<CaptureReport.InstanceStats> rows = new ArrayList<>();
         for (StatsSource s : session.armed) {
-            rows.add(row(s));
+            rows.add(row(s, currentTick));
         }
-        return new CaptureReport(session.target, session.windowTicks, rows);
+        long elapsed = Math.min(session.windowTicks, Math.max(0, currentTick - session.startTick));
+        return new CaptureReport(session.target, session.windowTicks, elapsed, stopped, rows);
     }
 
-    private static CaptureReport.InstanceStats row(StatsSource s) {
+    private static CaptureReport.InstanceStats row(StatsSource s, long currentTick) {
         return new CaptureReport.InstanceStats(s.label(),
                 s.captureResult().orElse(NO_CAPTURE),
                 s.stats().orElse(NO_SNAPSHOT),
-                s.liveEntities(), s.totalEntitySpawns(), s.restarts());
+                s.liveEntities(), Math.max(0, currentTick - s.startTick()));
     }
 }

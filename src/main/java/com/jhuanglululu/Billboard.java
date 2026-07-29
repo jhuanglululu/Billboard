@@ -116,7 +116,7 @@ public final class Billboard extends JavaPlugin {
 
         BillboardCommand.register(this, data, this::saveData, animations::keySet, getServer(),
                 () -> config, this::reload, this::exportRegistry,
-                () -> scheduler.pluginStats(data.placements().size()), scheduler::startCapture);
+                () -> scheduler.pluginStats(data.placements().size()), scheduler);
 
         PacketEvents.getAPI().init();
         getLogger().info("Billboard enabled: " + animations.size() + " animation(s), "
