@@ -56,7 +56,7 @@ public final class Billboard extends JavaPlugin {
     private final Map<String, Integer> animationHashes = new HashMap<>();
     private BillboardConfig config = BillboardConfig.defaults();
     private DataStore data;
-    private Path dataFile;
+    private Path dataDir;
     private AnimationScheduler scheduler;
     private ProximityController<RunningInstance> controller;
     private GuestOutput guestOutput;
@@ -77,6 +77,14 @@ public final class Billboard extends JavaPlugin {
         loadData();
         guestOutput = new GuestOutput(getServer(), () -> config.logViewers(),
                 () -> data.logMuted(), () -> config.consoleLog());
+        for (String issue : data.issues()) {
+            // Loud, and only now: the data folder is read before the output routing exists.
+            guestOutput.issue(MessageFormats.PREFIX + "<red>Skipped unreadable saved data</red>"
+                    + " <gray>(hover for details)</gray>",
+                    "<red>" + MessageFormats.escape(issue) + "</red>"
+                    + "\n<gray>plugins/Billboard/data</gray>");
+            getLogger().severe(issue);
+        }
         // Validate everything now: every animation and every placement is checked before a single
         // player can be near one, so no failure waits for a proximity trigger.
         validateAll(loadAnimations());
@@ -122,7 +130,7 @@ public final class Billboard extends JavaPlugin {
         if (scheduler != null) {
             scheduler.shutdown();
         }
-        if (data != null && dataFile != null) {
+        if (data != null && dataDir != null) {
             saveData();
         }
         if (PacketEvents.getAPI() != null) {
@@ -136,7 +144,14 @@ public final class Billboard extends JavaPlugin {
         if (!Files.exists(configFile)) {
             saveResource("config.toml", false);
         }
-        config = ConfigLoader.load(configFile);
+        // Anything unreadable in the file shouts and falls back to its default — the server still
+        // boots, but nobody gets to believe a mistyped setting took effect.
+        config = ConfigLoader.load(configFile, problem -> {
+            String line = MessageFormats.PREFIX + "<red>config.toml: " + MessageFormats.escape(problem)
+                    + "</red>";
+            getServer().getConsoleSender().sendMessage(Messages.render(line));
+            getLogger().severe("config.toml: " + problem);
+        });
     }
 
     /** Scans + validates the animations folder, replacing the loaded modules. */
@@ -212,14 +227,16 @@ public final class Billboard extends JavaPlugin {
     }
 
     private void loadData() {
-        dataFile = getDataFolder().toPath().resolve("data.toml");
-        data = DataStore.load(dataFile);
-        // No lazy pausing here any more: validateAll decides what is out of service, per placement,
+        dataDir = getDataFolder().toPath().resolve("data");
+        data = DataStore.load(dataDir);
+        // Unreadable records are reported (loudly) once guestOutput exists, not thrown: a corrupt
+        // saved record must not stop the server from booting.
+        // No lazy pausing here either: validateAll decides what is out of service, per placement,
         // and the paused flag keeps meaning only what it says — an animation an error stopped.
     }
 
     private void saveData() {
-        data.save(dataFile);
+        data.save(dataDir);
     }
 
     /**

@@ -34,7 +34,13 @@ dependencies {
     implementation('com.jhuanglululu:wasmachine') { version { branch = 'main' } }
     // Shaded + relocated (see shadowJar) so the jar is self-contained.
     implementation 'com.github.retrooper:packetevents-spigot:2.13.0'
-    implementation 'com.electronwill.night-config:toml:3.8.3'
+    // config.toml only (read-only); data lives in JSON/JSONL parsed with the Gson that
+    // paper-api already puts on the classpath, so no JSON library is bundled.
+    implementation('org.tomlj:tomlj:1.1.1') {
+        // Nullness annotations only; nothing reads them at run time, and unexcluded they would be
+        // a third-party namespace in the shaded jar that no relocation of ours covers.
+        exclude group: 'org.checkerframework', module: 'checker-qual'
+    }
     errorprone 'com.google.errorprone:error_prone_core:2.50.0'
     testImplementation 'org.junit.jupiter:junit-jupiter:6.1.2'
     // Paper is compileOnly for the plugin, but the tests need the real MiniMessage it bundles to
@@ -66,11 +72,14 @@ processResources {
 shadowJar {
     archiveClassifier = 'all'
     // Relocate bundled libraries out of their own namespaces so a server that also
-    // ships PacketEvents / night-config never clashes with our shaded copies.
+    // ships PacketEvents / tomlj never clashes with our shaded copies.
     def libs = 'com.jhuanglululu.billboard.libs'
     relocate 'com.github.retrooper.packetevents', "${libs}.packetevents.api"
     relocate 'io.github.retrooper.packetevents', "${libs}.packetevents.spigot"
-    relocate 'com.electronwill.nightconfig', "${libs}.nightconfig"
+    relocate 'org.tomlj', "${libs}.tomlj"
+    // tomlj's generated parser drags in the ANTLR runtime; unrelocated it would be the
+    // one unshaded namespace in the jar.
+    relocate 'org.antlr', "${libs}.antlr"
 }
 
 runServer {

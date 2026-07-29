@@ -32,7 +32,7 @@ class ConfigLoaderTest {
                 console = false
                 """);
 
-        BillboardConfig c = ConfigLoader.load(file);
+        BillboardConfig c = ConfigLoader.load(file, problem -> { });
         assertEquals(6, c.runtime().threads());
         assertEquals(300, c.runtime().poolShrinkDelayTicks());
         assertEquals(2_000_000L, c.runtime().instructionBudget());
@@ -53,7 +53,7 @@ class ConfigLoaderTest {
                 threads = 2
                 """);
 
-        BillboardConfig c = ConfigLoader.load(file);
+        BillboardConfig c = ConfigLoader.load(file, problem -> { });
         BillboardConfig d = BillboardConfig.defaults();
         assertEquals(2, c.runtime().threads());                                    // overridden
         assertEquals(d.runtime().instructionBudget(), c.runtime().instructionBudget()); // default

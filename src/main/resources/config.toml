@@ -1,6 +1,6 @@
 # Billboard configuration. Values apply on /billboard reload or server restart.
 # Runtime-managed state (placements, groups, whitelists, paused flags) lives
-# in data.toml — don't edit that file by hand while the server runs.
+# in the data/ folder — don't edit those files by hand while the server runs.
 
 [runtime]
 # Hard cap on interpreter worker threads. The actual pool size is
