@@ -3,9 +3,14 @@ package com.jhuanglululu.billboard.scheduler;
 import com.jhuanglululu.billboard.message.GuestOutput;
 import com.jhuanglululu.billboard.runtime.ExitCode;
 import com.jhuanglululu.billboard.runtime.TickResult;
+import com.jhuanglululu.billboard.stats.CaptureOrchestrator;
+import com.jhuanglululu.billboard.stats.CaptureReport;
+import com.jhuanglululu.billboard.stats.PluginStats;
 import com.jhuanglululu.wasmachine.runtime.WorkerPoolSizer;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -28,9 +33,13 @@ public final class AnimationScheduler {
 
     private final Plugin plugin;
     private final WorkerPoolSizer sizer;
+    private final int maxThreads;
     private final LongSupplier budget;
     private final GuestOutput guestOutput;
     private final ThreadPoolExecutor workers;
+    // Capture windows ride this scheduler's existing per-tick pass: no second timer exists just
+    // to notice that a measurement has finished.
+    private final CaptureOrchestrator captures = new CaptureOrchestrator();
 
     private final Set<RunningInstance> instances = ConcurrentHashMap.newKeySet();
     private final Set<RunningInstance> inFlight = ConcurrentHashMap.newKeySet();
@@ -45,6 +54,7 @@ public final class AnimationScheduler {
             LongSupplier budget, GuestOutput guestOutput) {
         this.plugin = plugin;
         this.sizer = sizer;
+        this.maxThreads = Math.max(1, maxThreads);
         this.budget = budget;
         this.guestOutput = guestOutput;
         AtomicInteger n = new AtomicInteger();
@@ -87,6 +97,33 @@ public final class AnimationScheduler {
         return instances.size();
     }
 
+    // --- stats ---
+
+    /**
+     * Arms a {@code /billboard stats} capture across every live instance of the target. Runs on the
+     * main thread, like the tick pass that will collect it.
+     *
+     * @param target      the word the user typed (one capture per target)
+     * @param animation   the resolved animation
+     * @param placementId one placement, or {@code null} for every placement of the animation
+     * @param windowTicks how long to capture
+     * @param onReport    receives the report on the main thread when the window closes
+     */
+    public CaptureOrchestrator.CaptureStart startCapture(String target, String animation,
+            String placementId, int windowTicks, Consumer<CaptureReport> onReport) {
+        return captures.start(target, animation, placementId, windowTicks, currentTick,
+                instances, onReport);
+    }
+
+    /** The instant plugin-wide view, minus the placement count only the data store knows. */
+    public PluginStats pluginStats(int placements) {
+        Map<String, Integer> byAnimation = new TreeMap<>();
+        for (RunningInstance instance : instances) {
+            byAnimation.merge(instance.placement().animation(), 1, Integer::sum);
+        }
+        return new PluginStats(sizer.current(), maxThreads, instances.size(), byAnimation, placements);
+    }
+
     /** Stop everything and shut the pool down (plugin disable). */
     public void shutdown() {
         if (tickTaskId != -1) {
@@ -97,11 +134,14 @@ public final class AnimationScheduler {
             instance.stop();
         }
         instances.clear();
+        captures.clear();
         workers.shutdownNow();
     }
 
     private void onServerTick() {
         currentTick++;
+        // Before dispatch: an instance armed now is sampled by the tick this pass is about to run.
+        captures.tick(currentTick, instances);
         int size = sizer.update(instances.size(), currentTick);
         workers.setCorePoolSize(Math.max(1, size));
         long b = budget.getAsLong();

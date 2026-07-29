@@ -162,6 +162,34 @@ public final class AnimationInstance {
     }
 
     /**
+     * Everything the engine can measure about this instance right now — instant gauges plus run
+     * totals. Entity counts are deliberately not in it: the engine cannot see them, so
+     * {@link #registry()} is where they come from.
+     */
+    public MachineInstance.StatsSnapshot stats() {
+        return machine.stats();
+    }
+
+    /**
+     * Arms a capture over the next {@code ticks} ticks.
+     *
+     * @return false if one is already armed, in which case nothing changes
+     */
+    public boolean startCapture(int ticks) {
+        return machine.startCapture(ticks);
+    }
+
+    /** Ticks left on the armed capture, or 0 when none is armed. */
+    public long captureRemainingTicks() {
+        return machine.captureRemainingTicks();
+    }
+
+    /** The most recently finished capture, if one has finished since it was armed. */
+    public Optional<MachineInstance.CaptureSummary> captureResult() {
+        return machine.captureResult();
+    }
+
+    /**
      * Advances the animation by one game tick: resumes every due task in spawn order,
      * sharing {@code fuelBudget} instructions across them.
      *

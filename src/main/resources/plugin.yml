@@ -7,3 +7,6 @@ permissions:
   billboard.admin:
     description: Manage Billboard animations, placements, and visibility lists
     default: op
+  billboard.stats:
+    description: Read Billboard performance numbers with /billboard stats
+    default: op

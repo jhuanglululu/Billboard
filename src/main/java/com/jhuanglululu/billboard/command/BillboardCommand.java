@@ -9,8 +9,14 @@ import com.jhuanglululu.billboard.data.VisibilityMode;
 import com.jhuanglululu.billboard.load.ReloadSummary;
 import com.jhuanglululu.billboard.message.MessageFormats;
 import com.jhuanglululu.billboard.message.Messages;
+import com.jhuanglululu.billboard.stats.CaptureOrchestrator;
+import com.jhuanglululu.billboard.stats.CaptureReport;
+import com.jhuanglululu.billboard.stats.CaptureStarter;
+import com.jhuanglululu.billboard.stats.PluginStats;
+import com.jhuanglululu.billboard.stats.StatsFormats;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
@@ -22,8 +28,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
+import net.kyori.adventure.audience.Audience;
 import org.bukkit.Server;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -42,10 +52,13 @@ public final class BillboardCommand {
     private final Supplier<BillboardConfig> config;
     private final Supplier<ReloadSummary> reload;
     private final Supplier<int[]> exportRegistry;
+    private final Supplier<PluginStats> pluginStats;
+    private final CaptureStarter captures;
 
     private BillboardCommand(DataStore data, Runnable save, Supplier<Set<String>> animationNames,
             Server server, Supplier<BillboardConfig> config, Supplier<ReloadSummary> reload,
-            Supplier<int[]> exportRegistry) {
+            Supplier<int[]> exportRegistry, Supplier<PluginStats> pluginStats,
+            CaptureStarter captures) {
         this.data = data;
         this.save = save;
         this.animationNames = animationNames;
@@ -53,14 +66,17 @@ public final class BillboardCommand {
         this.config = config;
         this.reload = reload;
         this.exportRegistry = exportRegistry;
+        this.pluginStats = pluginStats;
+        this.captures = captures;
     }
 
     /** Register {@code /billboard} on the plugin's command lifecycle. */
     public static void register(JavaPlugin plugin, DataStore data, Runnable save,
             Supplier<Set<String>> animationNames, Server server, Supplier<BillboardConfig> config,
-            Supplier<ReloadSummary> reload, Supplier<int[]> exportRegistry) {
+            Supplier<ReloadSummary> reload, Supplier<int[]> exportRegistry,
+            Supplier<PluginStats> pluginStats, CaptureStarter captures) {
         BillboardCommand cmd = new BillboardCommand(data, save, animationNames, server, config,
-                reload, exportRegistry);
+                reload, exportRegistry, pluginStats, captures);
         plugin.getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event ->
                 event.registrar().register(cmd.build(), "Billboard animation control", List.of("bb")));
     }
@@ -68,8 +84,16 @@ public final class BillboardCommand {
     /** Permission gating the admin subcommands (default op). */
     public static final String PERMISSION = "billboard.admin";
 
+    /**
+     * Permission gating {@code /billboard stats} on its own — a diagnostic role, deliberately not
+     * the log-viewer one: reading performance numbers is not the same job as watching guest output.
+     * Admins hold it through the umbrella below, so nobody has to be granted both.
+     */
+    public static final String PERMISSION_STATS = "billboard.stats";
+
     // Access matrix (see build()): admins get every subcommand; config log-viewers get ONLY
-    // /billboard log; everyone else sees nothing (root .requires fails).
+    // /billboard log; billboard.stats holders get ONLY /billboard stats; everyone else sees
+    // nothing (root .requires fails).
     private boolean isAdmin(CommandSourceStack src) {
         return src.getSender().hasPermission(PERMISSION);
     }
@@ -78,14 +102,19 @@ public final class BillboardCommand {
         return config.get().logViewers().contains(src.getSender().getName());
     }
 
+    private boolean isStatsUser(CommandSourceStack src) {
+        return isAdmin(src) || src.getSender().hasPermission(PERMISSION_STATS);
+    }
+
     private boolean rootAccess(CommandSourceStack src) {
-        return isAdmin(src) || isLogViewer(src);
+        return isAdmin(src) || isLogViewer(src) || isStatsUser(src);
     }
 
     private com.mojang.brigadier.tree.LiteralCommandNode<CommandSourceStack> build() {
-        // Root is reachable by admins OR config log-viewers; each admin subcommand re-checks
-        // admin, and /billboard log checks log-viewer-or-admin — so a non-admin log-viewer can
-        // reach only `log`, and a non-admin non-viewer reaches nothing.
+        // Root is reachable by admins OR config log-viewers OR billboard.stats holders; each
+        // admin subcommand re-checks admin, /billboard log checks log-viewer-or-admin and
+        // /billboard stats checks stats-or-admin — so each non-admin role reaches exactly its
+        // own subcommand, and someone with none of the three reaches nothing.
         return Commands.literal("billboard")
                 .requires(this::rootAccess)
                 .then(spawn())
@@ -100,6 +129,7 @@ public final class BillboardCommand {
                 .then(group())
                 .then(set())
                 .then(log())
+                .then(stats())
                 .build();
     }
 
@@ -199,19 +229,25 @@ public final class BillboardCommand {
                 save.run();
                 reply(ctx, "<green>" + verb + " placement <white>" + esc(p.key()) + "</white></green>");
             }
-            case AMBIGUOUS -> {
-                String line = MessageFormats.PREFIX + "<red>Placement id <white>" + esc(resolved.id())
-                        + "</white> is used by " + resolved.candidates().size() + " animations</red>";
-                StringBuilder hover = new StringBuilder("<gray>name the animation instead, or one of:</gray>");
-                for (String key : resolved.candidates()) {
-                    hover.append("\n<white>").append(esc(key)).append("</white>");
-                }
-                ctx.getSource().getSender().sendMessage(Messages.withHover(line, hover.toString()));
-            }
+            case AMBIGUOUS -> replyAmbiguous(ctx, resolved);
             case UNKNOWN -> reply(ctx, "<red>No animation or placement named <white>" + esc(target)
                     + "</white></red>");
         }
         return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * The one error shape a placement id shared by several animations gets, wherever it is
+     * resolved — pause, resume or stats all send this, so the fix reads the same everywhere.
+     */
+    private void replyAmbiguous(CommandContext<CommandSourceStack> ctx, PauseTarget resolved) {
+        String line = MessageFormats.PREFIX + "<red>Placement id <white>" + esc(resolved.id())
+                + "</white> is used by " + resolved.candidates().size() + " animations</red>";
+        StringBuilder hover = new StringBuilder("<gray>name the animation instead, or one of:</gray>");
+        for (String key : resolved.candidates()) {
+            hover.append("\n<white>").append(esc(key)).append("</white>");
+        }
+        ctx.getSource().getSender().sendMessage(Messages.withHover(line, hover.toString()));
     }
 
     /**
@@ -296,6 +332,108 @@ public final class BillboardCommand {
         reply(ctx, "<green>Guest log output is now <white>" + (mute ? "muted" : "unmuted")
                 + "</white> for you.</green>");
         return Command.SINGLE_SUCCESS;
+    }
+
+    // --- stats [animation|placement-id [seconds]] ---
+
+    /** The default capture window, in seconds, when the command is given no length. */
+    private static final int DEFAULT_CAPTURE_SECONDS = 10;
+
+    /** The longest capture the command accepts: ten minutes, per the plan. */
+    private static final int MAX_CAPTURE_SECONDS = 600;
+
+    /**
+     * {@code /billboard stats} — bare, the instant plugin-wide view (no capture, no waiting); with
+     * a target, a capture window whose report arrives when it closes.
+     */
+    private LiteralArgumentBuilder<CommandSourceStack> stats() {
+        return Commands.literal("stats")
+                .requires(this::isStatsUser)
+                .executes(ctx -> {
+                    StatsFormats.Line line = StatsFormats.pluginSummary(pluginStats.get());
+                    ctx.getSource().getSender().sendMessage(
+                            Messages.withHover(line.visible(), line.hover()));
+                    return Command.SINGLE_SUCCESS;
+                })
+                .then(Commands.argument("target", StringArgumentType.word())
+                        .suggests(pauseTargetSuggestions())
+                        .executes(ctx -> startCapture(ctx, DEFAULT_CAPTURE_SECONDS))
+                        .then(Commands.argument("seconds", IntegerArgumentType.integer())
+                                .suggests(literals("10", "30", "60"))
+                                .executes(ctx -> startCapture(ctx,
+                                        IntegerArgumentType.getInteger(ctx, "seconds")))));
+    }
+
+    private int startCapture(CommandContext<CommandSourceStack> ctx, int seconds) {
+        String target = StringArgumentType.getString(ctx, "target");
+        if (seconds < 1 || seconds > MAX_CAPTURE_SECONDS) {
+            reply(ctx, "<red>Capture length must be <white>1</white>..<white>" + MAX_CAPTURE_SECONDS
+                    + "</white> seconds, got " + seconds + "</red>");
+            return Command.SINGLE_SUCCESS;
+        }
+        PauseTarget resolved = PauseTarget.resolve(target, knownAnimations(), data.placements());
+        if (resolved.kind() == PauseTarget.Kind.AMBIGUOUS) {
+            replyAmbiguous(ctx, resolved);
+            return Command.SINGLE_SUCCESS;
+        }
+        if (resolved.kind() == PauseTarget.Kind.UNKNOWN) {
+            reply(ctx, "<red>No animation or placement named <white>" + esc(target)
+                    + "</white></red>");
+            return Command.SINGLE_SUCCESS;
+        }
+        // An animation covers all its placements; a placement id narrows to the one.
+        String animation = resolved.animation();
+        String placementId = resolved.kind() == PauseTarget.Kind.PLACEMENT ? resolved.id() : null;
+
+        int windowTicks = seconds * StatsFormats.TICKS_PER_SECOND;
+        CaptureOrchestrator.CaptureStart start = captures.start(target, animation, placementId,
+                windowTicks, reportTo(ctx));
+        if (!start.started()) {
+            send(ctx, StatsFormats.captureAlreadyRunning(target, start.remainingTicks()));
+            return Command.SINGLE_SUCCESS;
+        }
+        send(ctx, StatsFormats.captureStarted(target, seconds, start));
+        if (start.armed() == 0) {
+            // Loud, immediately: otherwise the user waits out the whole window for a report that
+            // can only say "nothing ran".
+            send(ctx, StatsFormats.noInstances(target, seconds));
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * Where a finished report goes. A player is looked up again when the window closes — captures
+     * last minutes and people log off — and the console takes it if they are gone.
+     */
+    private Consumer<CaptureReport> reportTo(CommandContext<CommandSourceStack> ctx) {
+        CommandSender sender = ctx.getSource().getSender();
+        UUID playerId = sender instanceof Player p ? p.getUniqueId() : null;
+        return report -> {
+            Audience audience = sender;
+            if (playerId != null) {
+                Player online = server.getPlayer(playerId);
+                audience = online != null ? online : server.getConsoleSender();
+            }
+            sendReport(audience, report);
+        };
+    }
+
+    private static void sendReport(Audience audience, CaptureReport report) {
+        if (!report.anySamples()) {
+            StatsFormats.Line line = StatsFormats.reportWithoutSamples(report);
+            audience.sendMessage(Messages.withHover(line.visible(), line.hover()));
+            return;
+        }
+        StatsFormats.Line header = StatsFormats.reportHeader(report);
+        audience.sendMessage(Messages.withHover(header.visible(), header.hover()));
+        for (CaptureReport.InstanceStats instance : report.instances()) {
+            StatsFormats.Line line = StatsFormats.instanceLine(instance);
+            audience.sendMessage(Messages.withHover(line.visible(), line.hover()));
+        }
+    }
+
+    private static void send(CommandContext<CommandSourceStack> ctx, StatsFormats.Line line) {
+        ctx.getSource().getSender().sendMessage(Messages.withHover(line.visible(), line.hover()));
     }
 
     // --- list [animation] ---
