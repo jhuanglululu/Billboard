@@ -1,10 +1,15 @@
-package com.jhuanglululu.wasm;
+package com.jhuanglululu.billboard.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-import com.jhuanglululu.billboard.runtime.AnimationInstance;
+import com.jhuanglululu.wasm.ExecResult;
+import com.jhuanglululu.wasm.ExecutionContext;
+import com.jhuanglululu.wasm.HostFunction;
+import com.jhuanglululu.wasm.Import;
+import com.jhuanglululu.wasm.Instance;
+import com.jhuanglululu.wasm.Module;
 import com.jhuanglululu.wasmachine.runtime.MachineInstance;
 import java.io.IOException;
 import java.io.InputStream;

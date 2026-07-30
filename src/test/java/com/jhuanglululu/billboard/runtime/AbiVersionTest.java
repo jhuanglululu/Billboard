@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.jhuanglululu.wasm.Module;
 import com.jhuanglululu.wasmachine.runtime.MachineInstance;
-import com.jhuanglululu.wasmachine.runtime.SyncWasm;
 import com.jhuanglululu.wasmachine.runtime.SyncWasm.P;
 import org.junit.jupiter.api.Test;
 
@@ -18,7 +17,7 @@ class AbiVersionTest {
 
     private static AnimationInstance instance(int billboardAbi, int engineAbi) {
         return new AnimationInstance("abi",
-                Module.parse(SyncWasm.module(new P().log(0), engineAbi, billboardAbi)),
+                Module.parse(BillboardWasm.module(new P().log(0), engineAbi, billboardAbi)),
                 new RecordingRenderer(), blockState -> true, (name, message) -> { }, 1 << 20);
     }
 

@@ -1,10 +1,14 @@
-package com.jhuanglululu.wasm;
+package com.jhuanglululu.billboard.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.jhuanglululu.wasm.Export;
+import com.jhuanglululu.wasm.ExternalKind;
+import com.jhuanglululu.wasm.Import;
+import com.jhuanglululu.wasm.Module;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;

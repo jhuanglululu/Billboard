@@ -36,7 +36,7 @@ final class BillboardRun {
             RecordingRenderer renderer, ContentValidator content) {
         List<String> logs = new ArrayList<>();
         AnimationInstance instance = new AnimationInstance("sync",
-                Module.parse(SyncWasm.module(main)), renderer, blockState -> true, content,
+                Module.parse(BillboardWasm.module(main)), renderer, blockState -> true, content,
                 (name, message) -> logs.add(message), memoryCap, seed);
         return SyncRun.drive((tick, fuel) -> outcomeOf(instance.tick(tick, fuel)),
                 logs, maxTicks, budget);

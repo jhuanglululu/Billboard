@@ -1,11 +1,11 @@
 package com.jhuanglululu.billboard.runtime;
 
-import static com.jhuanglululu.wasmachine.runtime.SyncWasm.EMIT_PARTICLE;
-import static com.jhuanglululu.wasmachine.runtime.SyncWasm.EMIT_PARTICLE_BLOCK;
-import static com.jhuanglululu.wasmachine.runtime.SyncWasm.EMIT_PARTICLE_DUST;
-import static com.jhuanglululu.wasmachine.runtime.SyncWasm.EMIT_PARTICLE_DUST_TRANSITION;
-import static com.jhuanglululu.wasmachine.runtime.SyncWasm.EMIT_PARTICLE_ITEM;
-import static com.jhuanglululu.wasmachine.runtime.SyncWasm.PLAY_SOUND;
+import static com.jhuanglululu.billboard.runtime.BillboardWasm.EMIT_PARTICLE;
+import static com.jhuanglululu.billboard.runtime.BillboardWasm.EMIT_PARTICLE_BLOCK;
+import static com.jhuanglululu.billboard.runtime.BillboardWasm.EMIT_PARTICLE_DUST;
+import static com.jhuanglululu.billboard.runtime.BillboardWasm.EMIT_PARTICLE_DUST_TRANSITION;
+import static com.jhuanglululu.billboard.runtime.BillboardWasm.EMIT_PARTICLE_ITEM;
+import static com.jhuanglululu.billboard.runtime.BillboardWasm.PLAY_SOUND;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
