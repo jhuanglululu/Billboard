@@ -169,7 +169,7 @@ public final class Billboard extends JavaPlugin {
     /**
      * Reports every load-time issue loudly and records which placements are out of service. Runs at
      * startup and after each reload: the animation issues come from {@link AnimationLoader}, the
-     * placement issues from cross-checking data.toml against the loaded animations and the server's
+     * placement issues from cross-checking the data store against the loaded animations and the server's
      * worlds. This is the primary gate — nothing here is deferred to a proximity trigger.
      */
     private void validateAll(AnimationLoader.Result scan) {

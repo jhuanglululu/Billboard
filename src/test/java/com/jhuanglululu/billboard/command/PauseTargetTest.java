@@ -65,7 +65,7 @@ class PauseTargetTest {
     @Test
     void anAnimationWithNoLoadedModuleStaysResumableThroughItsSettingsEntry() {
         // The caller passes loaded names ∪ persisted settings names; a broken .wasm keeps its
-        // paused flag in data.toml, and that entry is the only way back to a working state.
+        // paused flag in animations.jsonl, and that entry is the only way back to a working state.
         PauseTarget t = PauseTarget.resolve("broken", Set.of("broken"), List.of());
         assertEquals(PauseTarget.Kind.ANIMATION, t.kind());
     }

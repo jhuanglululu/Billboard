@@ -11,7 +11,7 @@ import java.util.Set;
 import java.util.function.Function;
 
 /**
- * Load-time cross-checks of {@code data.toml} against the world it has to run in: every placement
+ * Load-time cross-checks of the persisted placements against the world they have to run in: every placement
  * must name an animation that loaded and a world that exists, and every visibility entry must be
  * usable. Pure — no Bukkit, no file access — so every decision is unit-testable; the caller passes
  * the loaded animation names and the server's world names in.

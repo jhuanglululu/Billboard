@@ -5,7 +5,7 @@ import java.util.Optional;
 /**
  * What an animation's {@code main} returns to tell the host what to do when it ends
  * (task 0 returning ends the whole animation). Crosses the ABI as the {@code i32}
- * result of {@code _billboard_main}: {@code End = 0}, {@code Keep = 1}, {@code Repeat = 2}.
+ * result of {@code _engine_main}: {@code End = 0}, {@code Keep = 1}, {@code Repeat = 2}.
  */
 public enum ExitCode {
 

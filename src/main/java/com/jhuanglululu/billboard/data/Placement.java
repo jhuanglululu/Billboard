@@ -2,7 +2,7 @@ package com.jhuanglululu.billboard.data;
 
 /**
  * A user-placed instance of an animation, addressed by {@code (animation, id)}. Persisted
- * in data.toml; survives restarts.
+ * in placements.jsonl; survives restarts.
  *
  * @param animation  the animation name (a {@code .wasm} file stem)
  * @param id         the user-chosen placement id

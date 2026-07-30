@@ -14,7 +14,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
- * The data.toml cross-checks: each placement must name a loaded animation and an existing world, and
+ * The data-store cross-checks: each placement must name a loaded animation and an existing world, and
  * the visibility list its mode actually consults must be usable. Every failure skips only that
  * placement — the property that keeps one bad entry from taking the file down.
  */

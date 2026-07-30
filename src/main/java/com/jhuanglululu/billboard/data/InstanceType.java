@@ -16,7 +16,7 @@ public enum InstanceType {
         this.wire = wire;
     }
 
-    /** The lowercase token used in commands and data.toml. */
+    /** The lowercase token used in commands and the data files. */
     public String wire() {
         return wire;
     }

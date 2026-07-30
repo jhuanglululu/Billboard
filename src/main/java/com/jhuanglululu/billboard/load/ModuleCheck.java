@@ -80,7 +80,7 @@ public final class ModuleCheck {
 
     /**
      * Checks the entry point exists with the signature the scheduler calls it by. Without this a
-     * module missing {@code _billboard_main} — or exporting one that takes arguments or returns no
+     * module missing {@code _engine_main} — or exporting one that takes arguments or returns no
      * exit code — loads happily and only fails when the first player walks up to it, which is the
      * whole failure class load-time validation exists to remove.
      */
