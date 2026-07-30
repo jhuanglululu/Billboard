@@ -3,6 +3,7 @@ package com.jhuanglululu.billboard.stats;
 import com.jhuanglululu.billboard.message.MessageFormats;
 import com.jhuanglululu.wasmachine.runtime.MachineInstance.CaptureSummary;
 import com.jhuanglululu.wasmachine.runtime.MachineInstance.StatsSnapshot;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -22,34 +23,42 @@ import java.util.Map;
  * The {@code [Billboard]} prefix keeps whatever {@link MessageFormats} says it is.
  */
 public final class StatsFormats {
-
-    private StatsFormats() {}
-
-    /** Ticks per second, for turning capture windows back into the seconds the user asked for. */
+    
+    private StatsFormats() {
+    }
+    
+    /**
+     * Ticks per second, for turning capture windows back into the seconds the user asked for.
+     */
     public static final int TICKS_PER_SECOND = 20;
-
+    
     private static final double MIB = 1024.0 * 1024.0;
-
-    /** The block indents: one space before an instance's name, three before its numbers. */
+    
+    /**
+     * The block indents: one space before an instance's name, three before its numbers.
+     */
     private static final String NAME_INDENT = " ";
     private static final String DETAIL_INDENT = "   ";
-
+    
     /**
      * A visible line and its hover detail.
      *
      * @param visible the line — or multi-line block — shown in chat
      * @param hover   the detail behind it
      */
-    public record Line(String visible, String hover) {}
-
+    public record Line(String visible, String hover) {
+    }
+    
     // --- /billboard stats (no arguments) ---
-
-    /** The instant plugin-wide summary: threads, instances, placements. */
+    
+    /**
+     * The instant plugin-wide summary: threads, instances, placements.
+     */
     public static Line pluginSummary(PluginStats stats) {
         String visible = MessageFormats.PREFIX + "<white>" + stats.activeInstances()
                 + "</white> <gray>instance(s) on</gray> <white>" + stats.poolThreads()
                 + "</white><gray>/</gray><white>" + stats.maxThreads()
-                + "</white> <gray>worker thread(s) (hover for the breakdown)</gray>";
+                + "</white> <gray>worker thread(s)</gray>";
         StringBuilder hover = new StringBuilder();
         hover.append("<yellow>placements</yellow> <white>").append(stats.placements()).append("</white>");
         if (stats.instancesByAnimation().isEmpty()) {
@@ -61,18 +70,17 @@ public final class StatsFormats {
                         .append("</white> <gray>instance(s)</gray>");
             }
         }
-        hover.append("\n<gray>the pool grows with demand and shrinks only after the debounce</gray>");
         return new Line(visible, hover.toString());
     }
-
+    
     private static List<Map.Entry<String, Integer>> sorted(Map<String, Integer> counts) {
         List<Map.Entry<String, Integer>> out = new ArrayList<>(counts.entrySet());
         out.sort(Map.Entry.comparingByKey());
         return out;
     }
-
+    
     // --- starting and stopping a capture ---
-
+    
     /**
      * The acknowledgement, carrying the click that ends the window early. It shows no numbers:
      * nothing is measured outside a capture, so anything here would be a figure from before the
@@ -82,31 +90,38 @@ public final class StatsFormats {
      * character, so it cannot break out of the MiniMessage tag it is embedded in.
      */
     public static String captureStarted(String target, int seconds, int armed) {
+        String instanceStr = armed > 1 ? "instances" : "instance";
+        
         return MessageFormats.PREFIX + "<gray>capturing</gray> <white>"
                 + MessageFormats.escape(target) + "</white> <gray>for</gray> <white>" + seconds
-                + "s</white> <gray>(</gray><white>" + armed + "</white> <gray>instance(s),</gray> "
+                + "s</white> <gray>(</gray><white>" + armed + "</white> "
+                + "<gray>" + instanceStr + ")</gray> "
                 + "<click:run_command:'/billboard stats stop " + target + "'>"
-                + "<hover:show_text:\"<gray>stop now and report what was captured</gray>\">"
-                + "<gray>[click]</gray></hover></click><gray> to stop)</gray>";
+                + "<red>[click]</red></click>";
     }
-
-    /** The refusal when a capture on the same target is already running. */
+    
+    /**
+     * The refusal when a capture on the same target is already running.
+     */
     public static Line captureAlreadyRunning(String target, long remainingTicks) {
-        String visible = MessageFormats.PREFIX + "<gray>already capturing</gray> <white>"
-                + MessageFormats.escape(target) + "</white><gray>,</gray> <white>"
+        String visible = MessageFormats.PREFIX + "<gray>already capturing</gray> <yellow>"
+                + MessageFormats.escape(target) + "</yellow><gray>,</gray> <white>"
                 + seconds(remainingTicks) + "s</white> <gray>left</gray>";
+        
         String hover = "<gray>one capture per target: the running window keeps its samples "
                 + "instead of being restarted under you</gray>"
                 + "\n<gray>the report goes to whoever started it</gray>";
         return new Line(visible, hover);
     }
-
-    /** The gray notice {@code stats stop} gives when nothing is running on the target. */
+    
+    /**
+     * The gray notice {@code stats stop} gives when nothing is running on the target.
+     */
     public static String noCaptureRunning(String target) {
         return MessageFormats.PREFIX + "<gray>no capture is running on</gray> <white>"
                 + MessageFormats.escape(target) + "</white>";
     }
-
+    
     /**
      * The loud warning that the target resolved but nothing is running it. The window is armed
      * anyway, so this says how to make it produce something rather than just refusing.
@@ -121,15 +136,17 @@ public final class StatsFormats {
                 + "\n<gray>a paused animation or placement never starts: check /billboard list</gray>";
         return new Line(visible, hover);
     }
-
+    
     // --- the report ---
-
-    /** The header line: what was captured, over how long, and what it cost per tick. */
+    
+    /**
+     * The header line: what was captured, over how long, and what it cost per tick.
+     */
     public static Line reportHeader(CaptureReport report) {
         String span = report.stopped()
                 ? "<gray>over</gray> <white>" + seconds(report.elapsedTicks())
-                        + "s</white> <gray>of</gray> <white>" + seconds(report.windowTicks())
-                        + "s</white> <gray>requested</gray>"
+                + "s</white> <gray>of</gray> <white>" + seconds(report.windowTicks())
+                + "s</white> <gray>requested</gray>"
                 : "<gray>over</gray> <white>" + seconds(report.windowTicks()) + "s</white>";
         String visible = MessageFormats.PREFIX + "<white>" + MessageFormats.escape(report.target())
                 + "</white> " + span + "<gray>:</gray> <white>"
@@ -142,13 +159,13 @@ public final class StatsFormats {
                 + "</white>"
                 + "\n<yellow>entities</yellow> <white>" + report.liveEntities() + "</white>"
                 + (report.partial()
-                        ? "\n<gray>partial: an instance ended or joined inside the window</gray>"
-                        : "")
+                ? "\n<gray>partial: an instance ended or joined inside the window</gray>"
+                : "")
                 + "\n<gray>per-tick figures are the sum over instances — what the animation costs "
                 + "the server each tick</gray>";
         return new Line(visible, hover);
     }
-
+    
     /**
      * One instance's block: its name, then its numbers on indented lines. The hover holds window
      * facts only — nothing is measured outside a capture, so there is nothing else honest to show.
@@ -161,8 +178,8 @@ public final class StatsFormats {
         String name = NAME_INDENT + "<white>" + MessageFormats.escape(instance.label()) + "</white>";
         if (!instance.sampled()) {
             return new Line(name + "\n" + DETAIL_INDENT + "<gray>no ticks captured</gray>",
-                    "<gray>it ran no tick inside the window: it had already ended, or it never "
-                            + "started</gray>");
+                            "<gray>it ran no tick inside the window: it had already ended, or it never "
+                                    + "started</gray>");
         }
         String visible = name
                 + "\n" + DETAIL_INDENT + "<white>" + mean(c.meanInstructions())
@@ -185,7 +202,7 @@ public final class StatsFormats {
                 + "</white>";
         return new Line(visible, hover);
     }
-
+    
     /**
      * The report for a window that ended having sampled nothing at all. Zeroes would read as a
      * measurement; this says there was none.
@@ -199,31 +216,35 @@ public final class StatsFormats {
                 + "\n<gray>an instance exists only while an eligible player is in range</gray>";
         return new Line(visible, hover);
     }
-
+    
     // --- numbers ---
-
-    /** Ticks as whole-ish seconds, the unit the command speaks. */
+    
+    /**
+     * Ticks as whole-ish seconds, the unit the command speaks.
+     */
     public static String seconds(long ticks) {
         return trim((double) ticks / TICKS_PER_SECOND);
     }
-
+    
     private static String count(long value) {
         return String.format(Locale.ROOT, "%,d", value);
     }
-
+    
     private static String mean(double value) {
         return String.format(Locale.ROOT, "%,.0f", value);
     }
-
+    
     private static String mib(double bytes) {
         return String.format(Locale.ROOT, "%.2f MiB", bytes / MIB);
     }
-
-    /** Byte counts arrive as longs far below the precision limit; this keeps call sites clean. */
+    
+    /**
+     * Byte counts arrive as longs far below the precision limit; this keeps call sites clean.
+     */
     private static String mib(long bytes) {
         return mib((double) bytes);
     }
-
+    
     private static String trim(double value) {
         String s = String.format(Locale.ROOT, "%.1f", value);
         return s.endsWith(".0") ? s.substring(0, s.length() - 2) : s;
