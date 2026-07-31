@@ -162,6 +162,76 @@ class DataStoreTest {
     }
 
     @Test
+    void rotationRoundTrips(@TempDir Path dir) {
+        Path data = dir.resolve("data");
+        DataStore out = new DataStore();
+        out.putPlacement(new Placement("demo", "turned", "world", 10.5, 64.0, -20.0,
+                90.0, -22.5, 180.0, InstanceType.SHARED, VisibilityMode.EVERYONE));
+        out.putPlacement(new Placement("demo", "straight", "world", 0, 64, 0,
+                InstanceType.SHARED, VisibilityMode.EVERYONE));
+        out.save(data);
+
+        DataStore in = DataStore.load(data);
+        assertTrue(in.issues().isEmpty(), () -> "issues: " + in.issues());
+
+        Placement turned = in.placement("demo", "turned").orElseThrow();
+        assertEquals(90.0, turned.yaw());
+        assertEquals(-22.5, turned.pitch());
+        assertEquals(180.0, turned.roll());
+        // The convenience constructor's placements stay unrotated through the file, too.
+        Placement straight = in.placement("demo", "straight").orElseThrow();
+        assertEquals(0.0, straight.yaw());
+        assertEquals(0.0, straight.pitch());
+        assertEquals(0.0, straight.roll());
+    }
+
+    @Test
+    void placementsWrittenBeforeRotationExistedLoadAsUnrotated(@TempDir Path dir) throws IOException {
+        // The legacy line is exactly what the plugin used to write — no yaw/pitch/roll keys at
+        // all. It must load silently (not as a broken record), come back unrotated, and be
+        // rewritten with the three keys on the next save, like the animation-level lists before it.
+        Path data = dir.resolve("data");
+        Files.createDirectories(data);
+        Files.writeString(data.resolve("placements.jsonl"),
+                "{\"animation\":\"demo\",\"id\":\"old\",\"world\":\"world\",\"x\":1.0,\"y\":2.0,"
+                        + "\"z\":3.0,\"type\":\"shared\",\"visibility\":\"everyone\","
+                        + "\"paused\":false,\"whitelist\":[],\"blacklist\":[]}\n");
+
+        DataStore store = DataStore.load(data);
+
+        assertTrue(store.issues().isEmpty(), () -> "issues: " + store.issues());
+        Placement p = store.placement("demo", "old").orElseThrow();
+        assertEquals(1.0, p.x());
+        assertEquals(0.0, p.yaw());
+        assertEquals(0.0, p.pitch());
+        assertEquals(0.0, p.roll());
+
+        store.save(data);
+        String rewritten = Files.readString(data.resolve("placements.jsonl"));
+        assertTrue(rewritten.contains("\"yaw\":0.0"), rewritten);
+        assertTrue(rewritten.contains("\"pitch\":0.0"), rewritten);
+        assertTrue(rewritten.contains("\"roll\":0.0"), rewritten);
+    }
+
+    @Test
+    void aRotationKeyThatIsNotANumberIsStillABrokenRecord(@TempDir Path dir) throws IOException {
+        // Absent means "old file"; present-but-nonsense means a typo someone must be told about,
+        // never a silent zero.
+        Path data = dir.resolve("data");
+        Files.createDirectories(data);
+        Files.writeString(data.resolve("placements.jsonl"),
+                "{\"animation\":\"demo\",\"id\":\"bad\",\"world\":\"world\",\"x\":0.0,\"y\":0.0,"
+                        + "\"z\":0.0,\"yaw\":\"north\",\"type\":\"shared\","
+                        + "\"visibility\":\"everyone\",\"paused\":false}\n");
+
+        DataStore store = DataStore.load(data);
+
+        assertTrue(store.placements().isEmpty());
+        assertEquals(1, store.issues().size(), () -> "issues: " + store.issues());
+        assertTrue(store.issues().get(0).contains("placements.jsonl line 1"), store.issues().get(0));
+    }
+
+    @Test
     void loadingAnAbsentFolderYieldsAnEmptyStore(@TempDir Path dir) {
         DataStore store = DataStore.load(dir.resolve("data"));
         assertTrue(store.placements().isEmpty());

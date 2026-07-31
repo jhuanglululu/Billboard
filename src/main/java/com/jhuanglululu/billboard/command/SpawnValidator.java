@@ -6,8 +6,9 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
- * Guards {@code /billboard spawn} against unknown animations: a placement may only be created
- * for an animation whose module actually loaded. Pure (no Bukkit), so it is unit-testable.
+ * Guards {@code /billboard spawn} against the arguments it cannot use: an animation whose module
+ * never loaded, a coordinate token that is not a coordinate, and {@code ~} from a sender that has
+ * no position to measure from. Pure (no Bukkit), so it is unit-testable.
  */
 public final class SpawnValidator {
 
@@ -29,5 +30,23 @@ public final class SpawnValidator {
         return Optional.of(MessageFormats.PREFIX + "<red>Unknown animation <white>"
                 + MessageFormats.escape(animation)
                 + "</white> — not loaded. Loaded: <gray>" + names + "</gray></red>");
+    }
+
+    /**
+     * The one shape a coordinate token that is neither a number nor a {@code ~} form gets, with
+     * the offending token in white like every other rejected word.
+     */
+    public static String badCoordinate(String axis, String token) {
+        return MessageFormats.PREFIX + "<red>Bad " + axis + " coordinate: <white>"
+                + MessageFormats.escape(token) + "</white></red>";
+    }
+
+    /**
+     * What a console (or any senderless source) gets for {@code ~}: there is no position to be
+     * relative to, and guessing one would put the placement somewhere nobody chose.
+     */
+    public static String relativeNeedsPlayer() {
+        return MessageFormats.PREFIX + "<red>Only a player can use <white>~</white> coordinates — "
+                + "type the numbers instead</red>";
     }
 }

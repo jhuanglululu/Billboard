@@ -18,6 +18,11 @@ import java.util.Set;
  * @param x          origin x
  * @param y          origin y
  * @param z          origin z
+ * @param yaw        Minecraft yaw in degrees of the whole placement (0 = +Z, 90 = -X); the guest's
+ *                   coordinate frame is rotated rigidly about the origin, see
+ *                   {@link com.jhuanglululu.billboard.render.Rotation}
+ * @param pitch      Minecraft pitch in degrees (positive = down), about the yawed X axis
+ * @param roll       roll in degrees about the resulting view axis
  * @param type       per-player or shared
  * @param visibility who may see this placement
  * @param paused     whether {@code /billboard pause <id>} disabled this one placement; a paused
@@ -28,18 +33,32 @@ import java.util.Set;
  * @param blacklist  the entries {@code visibility = blacklist} consults
  */
 public record Placement(String animation, String id, String world, double x, double y, double z,
-        InstanceType type, VisibilityMode visibility, boolean paused,
-        Set<String> whitelist, Set<String> blacklist) {
+        double yaw, double pitch, double roll, InstanceType type, VisibilityMode visibility,
+        boolean paused, Set<String> whitelist, Set<String> blacklist) {
 
     public Placement {
         whitelist = frozen(whitelist);
         blacklist = frozen(blacklist);
     }
 
-    /** A new, unpaused placement with empty lists — every caller but the data file's reader wants this shape. */
+    /** A new, unpaused, unrotated placement with empty lists. */
     public Placement(String animation, String id, String world, double x, double y, double z,
             InstanceType type, VisibilityMode visibility) {
-        this(animation, id, world, x, y, z, type, visibility, false, Set.of(), Set.of());
+        this(animation, id, world, x, y, z, 0, 0, 0, type, visibility, false, Set.of(), Set.of());
+    }
+
+    /** A new, unpaused placement with a rotation and empty lists — what {@code spawn} builds. */
+    public Placement(String animation, String id, String world, double x, double y, double z,
+            double yaw, double pitch, double roll, InstanceType type, VisibilityMode visibility) {
+        this(animation, id, world, x, y, z, yaw, pitch, roll, type, visibility, false,
+                Set.of(), Set.of());
+    }
+
+    /** An unrotated placement with explicit pause flag and lists. */
+    public Placement(String animation, String id, String world, double x, double y, double z,
+            InstanceType type, VisibilityMode visibility, boolean paused,
+            Set<String> whitelist, Set<String> blacklist) {
+        this(animation, id, world, x, y, z, 0, 0, 0, type, visibility, paused, whitelist, blacklist);
     }
 
     /** The unique key {@code "animation/id"} for maps. */
@@ -49,32 +68,32 @@ public record Placement(String animation, String id, String world, double x, dou
 
     /** A copy with a different visibility mode. */
     public Placement withVisibility(VisibilityMode newVisibility) {
-        return new Placement(animation, id, world, x, y, z, type, newVisibility, paused,
-                whitelist, blacklist);
+        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, type, newVisibility,
+                paused, whitelist, blacklist);
     }
 
     /** A copy with a different instance type. */
     public Placement withType(InstanceType newType) {
-        return new Placement(animation, id, world, x, y, z, newType, visibility, paused,
-                whitelist, blacklist);
+        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, newType, visibility,
+                paused, whitelist, blacklist);
     }
 
     /** A copy with the per-placement pause flag set or cleared. */
     public Placement withPaused(boolean newPaused) {
-        return new Placement(animation, id, world, x, y, z, type, visibility, newPaused,
-                whitelist, blacklist);
+        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, type, visibility,
+                newPaused, whitelist, blacklist);
     }
 
     /** A copy with a different whitelist. */
     public Placement withWhitelist(Collection<String> entries) {
-        return new Placement(animation, id, world, x, y, z, type, visibility, paused,
-                frozen(entries), blacklist);
+        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, type, visibility,
+                paused, frozen(entries), blacklist);
     }
 
     /** A copy with a different blacklist. */
     public Placement withBlacklist(Collection<String> entries) {
-        return new Placement(animation, id, world, x, y, z, type, visibility, paused,
-                whitelist, frozen(entries));
+        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, type, visibility,
+                paused, whitelist, frozen(entries));
     }
 
     /** Whichever of the two lists the flag names, for the code that treats them alike. */

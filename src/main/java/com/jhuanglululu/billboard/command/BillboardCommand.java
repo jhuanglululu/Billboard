@@ -19,14 +19,17 @@ import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import java.util.Collection;
+import java.util.EnumMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -135,28 +138,74 @@ public final class BillboardCommand {
                 .build();
     }
 
-    // --- spawn <animation> <id> <x y z> <type> <visibility> ---
+    // --- spawn <animation> <id> <x y z> [yaw] [pitch] [roll] <type> <visibility> ---
 
+    /**
+     * The three rotation arguments are optional and sit between {@code z} and {@code type}, so the
+     * tree branches to {@code type} after each of them. That is unambiguous rather than merely
+     * lucky: {@code yaw}/{@code pitch}/{@code roll} are doubles and {@code type} is a word, so the
+     * word {@code shared} can only ever parse down the {@code type} branch, whichever depth it is
+     * reached at. Each branch needs its own node objects, hence {@link #spawnTail()} building a
+     * fresh one per call.
+     */
     private LiteralArgumentBuilder<CommandSourceStack> spawn() {
         return Commands.literal("spawn").requires(this::isAdmin).then(
             Commands.argument("animation", StringArgumentType.word()).suggests(animationSuggestions()).then(
             Commands.argument("id", StringArgumentType.word()).then(
-            Commands.argument("x", DoubleArgumentType.doubleArg()).then(
-            Commands.argument("y", DoubleArgumentType.doubleArg()).then(
-            Commands.argument("z", DoubleArgumentType.doubleArg()).then(
-            Commands.argument("type", StringArgumentType.word()).suggests(literals("shared", "per_player")).then(
+            Commands.argument("x", CoordinateArgument.INSTANCE).suggests(coordinateSuggestions(Axis.X)).then(
+            Commands.argument("y", CoordinateArgument.INSTANCE).suggests(coordinateSuggestions(Axis.Y)).then(
+            Commands.argument("z", CoordinateArgument.INSTANCE).suggests(coordinateSuggestions(Axis.Z))
+                    .then(spawnTail())
+                    .then(rotationArgument("yaw")
+                            .then(spawnTail())
+                            .then(rotationArgument("pitch")
+                                    .then(spawnTail())
+                                    .then(rotationArgument("roll")
+                                            .then(spawnTail())))))))));
+    }
+
+    /** One rotation argument: degrees, any value — Minecraft angles wrap, so nothing is invalid. */
+    private static RequiredArgumentBuilder<CommandSourceStack, Double> rotationArgument(String name) {
+        return Commands.argument(name, DoubleArgumentType.doubleArg())
+                .suggests(literals("0", "45", "90", "180", "270"));
+    }
+
+    /** A fresh {@code <type> <visibility>} tail; every optional-rotation branch ends in one. */
+    private RequiredArgumentBuilder<CommandSourceStack, String> spawnTail() {
+        return Commands.argument("type", StringArgumentType.word())
+                .suggests(literals("shared", "per_player")).then(
             Commands.argument("visibility", StringArgumentType.word())
                     .suggests(literals("everyone", "none", "whitelist", "blacklist"))
-                    .executes(this::doSpawn))))))));
+                    .executes(this::doSpawn));
     }
 
     private int doSpawn(CommandContext<CommandSourceStack> ctx) {
         String animation = StringArgumentType.getString(ctx, "animation");
         String id = StringArgumentType.getString(ctx, "id");
-        double x = DoubleArgumentType.getDouble(ctx, "x");
-        double y = DoubleArgumentType.getDouble(ctx, "y");
-        double z = DoubleArgumentType.getDouble(ctx, "z");
         String world = worldOf(ctx);
+        Map<Axis, Coordinate> coordinates = new EnumMap<>(Axis.class);
+        for (Axis axis : Axis.values()) {
+            String token = StringArgumentType.getString(ctx, axis.argument());
+            try {
+                coordinates.put(axis, Coordinate.parse(token));
+            } catch (IllegalArgumentException e) {
+                reply(ctx, SpawnValidator.badCoordinate(axis.argument(), token));
+                return Command.SINGLE_SUCCESS;
+            }
+        }
+        // A relative coordinate is measured from the sender's own position, so a sender without
+        // one is refused outright rather than silently measured from somewhere else.
+        Player player = ctx.getSource().getSender() instanceof Player p ? p : null;
+        if (player == null && coordinates.values().stream().anyMatch(Coordinate::relative)) {
+            reply(ctx, SpawnValidator.relativeNeedsPlayer());
+            return Command.SINGLE_SUCCESS;
+        }
+        double x = coordinates.get(Axis.X).resolve(player == null ? 0 : Axis.X.of(player));
+        double y = coordinates.get(Axis.Y).resolve(player == null ? 0 : Axis.Y.of(player));
+        double z = coordinates.get(Axis.Z).resolve(player == null ? 0 : Axis.Z.of(player));
+        double yaw = optionalDouble(ctx, "yaw");
+        double pitch = optionalDouble(ctx, "pitch");
+        double roll = optionalDouble(ctx, "roll");
         Optional<String> unknown = SpawnValidator.rejectUnknown(animation, animationNames.get());
         if (unknown.isPresent()) {
             reply(ctx, unknown.get());
@@ -180,11 +229,17 @@ public final class BillboardCommand {
             reply(ctx, unknownToken("visibility mode", visibilityToken));
             return Command.SINGLE_SUCCESS;
         }
-        data.putPlacement(new Placement(animation, id, world, x, y, z, type, visibility));
+        data.putPlacement(new Placement(animation, id, world, x, y, z, yaw, pitch, roll, type,
+                visibility));
         save.run();
+        // An unrotated placement reads exactly as it always did; the rotation is appended only
+        // when there is one, so the common line does not grow three zeroes.
+        String rotation = yaw == 0 && pitch == 0 && roll == 0
+                ? ""
+                : " facing <white>" + fmt(yaw) + ", " + fmt(pitch) + ", " + fmt(roll) + "</white>";
         reply(ctx, MessageFormats.PREFIX + "<green>Placed <white>" + esc(animation) + "/" + esc(id)
                 + "</white> at <white>" + fmt(x) + ", " + fmt(y) + ", " + fmt(z)
-                + "</white> in <white>" + esc(world) + "</white></green>");
+                + "</white>" + rotation + " in <white>" + esc(world) + "</white></green>");
         return Command.SINGLE_SUCCESS;
     }
 
@@ -819,6 +874,40 @@ public final class BillboardCommand {
         };
     }
 
+    /** The three coordinate arguments, each knowing which of a player's coordinates it mirrors. */
+    private enum Axis {
+        X, Y, Z;
+
+        /** The argument name in the command tree — lower case, like every other argument. */
+        String argument() {
+            return name().toLowerCase(java.util.Locale.ROOT);
+        }
+
+        double of(Player player) {
+            return switch (this) {
+                case X -> player.getX();
+                case Y -> player.getY();
+                case Z -> player.getZ();
+            };
+        }
+    }
+
+    /**
+     * What one coordinate offers: {@code ~} first (the reason relative coordinates exist), then
+     * the player's own coordinate on this axis floored to a whole number — the block they are
+     * standing in, which is where someone eyeballing a spot means. Console gets only {@code ~}'s
+     * absence: it has no position, so only the literal hint would be a lie.
+     */
+    private static SuggestionProvider<CommandSourceStack> coordinateSuggestions(Axis axis) {
+        return (ctx, builder) -> {
+            if (ctx.getSource().getSender() instanceof Player p) {
+                builder.suggest("~");
+                builder.suggest(String.valueOf((long) Math.floor(axis.of(p))));
+            }
+            return builder.buildFuture();
+        };
+    }
+
     private static SuggestionProvider<CommandSourceStack> literals(String... options) {
         return (ctx, builder) -> {
             for (String o : options) {
@@ -835,6 +924,15 @@ public final class BillboardCommand {
             return StringArgumentType.getString(ctx, name);
         } catch (IllegalArgumentException e) {
             return null;
+        }
+    }
+
+    /** An optional numeric argument's value, or {@code 0} when that branch was not taken. */
+    private static double optionalDouble(CommandContext<CommandSourceStack> ctx, String name) {
+        try {
+            return DoubleArgumentType.getDouble(ctx, name);
+        } catch (IllegalArgumentException e) {
+            return 0;
         }
     }
 

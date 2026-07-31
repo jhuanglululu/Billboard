@@ -32,6 +32,28 @@ class SpawnValidatorTest {
     }
 
     @Test
+    void badCoordinateNamesTheAxisAndTheToken() {
+        String error = SpawnValidator.badCoordinate("y", "sixty-four");
+        assertTrue(error.contains("y coordinate"), error);
+        assertTrue(error.contains("<white>sixty-four</white>"), error);
+        assertTrue(error.contains("<red>"), error);
+    }
+
+    @Test
+    void badCoordinateEscapesTheRejectedToken() {
+        assertTrue(SpawnValidator.badCoordinate("x", "<b>").contains("\\<b>"));
+    }
+
+    @Test
+    void relativeWithoutAPlayerSaysWhoCanUseItAndWhatToDoInstead() {
+        String error = SpawnValidator.relativeNeedsPlayer();
+        assertTrue(error.contains("<red>"), error);
+        assertTrue(error.contains("<white>~</white>"), error);
+        assertTrue(error.contains("player"), error);
+        assertFalse(error.contains(".</red>"), "house style: no trailing periods");
+    }
+
+    @Test
     void escapesUntrustedAnimationName() {
         Optional<String> error = SpawnValidator.rejectUnknown("<b>x", Set.of("demo"));
         assertTrue(error.isPresent());

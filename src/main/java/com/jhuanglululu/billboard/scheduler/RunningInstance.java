@@ -4,6 +4,7 @@ import com.jhuanglululu.billboard.data.Placement;
 import com.jhuanglululu.billboard.message.MessageFormats;
 import com.jhuanglululu.billboard.render.Origin;
 import com.jhuanglululu.billboard.render.PacketEventsRenderer;
+import com.jhuanglululu.billboard.render.Rotation;
 import com.jhuanglululu.billboard.runtime.AnimationInstance;
 import com.jhuanglululu.billboard.runtime.BlockStateValidator;
 import com.jhuanglululu.billboard.runtime.ContentValidator;
@@ -55,7 +56,8 @@ public final class RunningInstance implements StatsSource {
         this.content = content;
         this.memoryCapBytes = memoryCapBytes;
         this.renderer = new PacketEventsRenderer(
-                new Origin(placement.world(), placement.x(), placement.y(), placement.z()));
+                new Origin(placement.world(), placement.x(), placement.y(), placement.z(),
+                        new Rotation(placement.yaw(), placement.pitch(), placement.roll())));
         this.instance = build();
     }
 

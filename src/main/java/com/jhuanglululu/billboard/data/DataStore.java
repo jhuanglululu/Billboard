@@ -31,8 +31,8 @@ import java.util.function.Consumer;
  * <pre>
  * data.json          {"groups": {id: [players]}, "log-muted": [names]}
  * animations.jsonl   one object per line: name, paused
- * placements.jsonl   one object per line: animation, id, world, x, y, z, type, visibility,
- *                    paused, whitelist, blacklist
+ * placements.jsonl   one object per line: animation, id, world, x, y, z, yaw, pitch, roll,
+ *                    type, visibility, paused, whitelist, blacklist
  * </pre>
  *
  * <p><b>Why line-delimited JSON.</b> The two growing collections are records, and one corrupt
@@ -201,6 +201,9 @@ public final class DataStore {
                 o.addProperty("x", p.x());
                 o.addProperty("y", p.y());
                 o.addProperty("z", p.z());
+                o.addProperty("yaw", p.yaw());
+                o.addProperty("pitch", p.pitch());
+                o.addProperty("roll", p.roll());
                 o.addProperty("type", p.type().wire());
                 o.addProperty("visibility", p.visibility().wire());
                 o.addProperty("paused", p.paused());
@@ -270,11 +273,20 @@ public final class DataStore {
         forEachRecord(file, record -> animation(string(record, "name")).setPaused(bool(record, "paused")));
     }
 
+    /**
+     * Reads placements.jsonl. {@code yaw}/{@code pitch}/{@code roll} arrived after the first
+     * released format, so a line written without them is not an error: it loads as an unrotated
+     * placement (all three zero) and is rewritten with them on the next save — the same
+     * no-migration-step treatment the animation-level visibility lists got in
+     * {@link #readAnimations}.
+     */
     private void readPlacements(Path file) {
         forEachRecord(file, record -> {
             Placement p = new Placement(
                     string(record, "animation"), string(record, "id"), string(record, "world"),
                     number(record, "x"), number(record, "y"), number(record, "z"),
+                    optionalNumber(record, "yaw"), optionalNumber(record, "pitch"),
+                    optionalNumber(record, "roll"),
                     InstanceType.fromWire(string(record, "type")),
                     VisibilityMode.fromWire(string(record, "visibility")),
                     bool(record, "paused"),
@@ -332,6 +344,15 @@ public final class DataStore {
             throw new IllegalArgumentException("\"" + key + "\" must be a number, got " + v);
         }
         return v.getAsDouble();
+    }
+
+    /**
+     * A number that older files may simply not carry: absent reads as {@code 0}, but a key that is
+     * present and not a number is still a broken record, so a typo is reported rather than
+     * silently becoming zero.
+     */
+    private static double optionalNumber(JsonObject record, String key) {
+        return record.get(key) == null ? 0 : number(record, key);
     }
 
     private static boolean bool(JsonObject record, String key) {

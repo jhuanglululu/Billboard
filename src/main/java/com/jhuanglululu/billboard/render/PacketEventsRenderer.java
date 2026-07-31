@@ -92,6 +92,25 @@ import org.bukkit.entity.Player;
  * so an {@code overTicks > 0} position/pose/yaw set registers an {@link EntityTweens} tween and
  * {@link #tickTweens()} sends one packet per tick until it lands. Displays keep using the
  * client's own interpolation.
+ *
+ * <p><b>Placement rotation.</b> Everything positional this class emits goes through the
+ * {@link Origin} — spawn positions, teleports (including every tween step), particle positions and
+ * their offset vectors, sound positions — so a rotated placement turns the whole guest frame
+ * rigidly about its origin ({@link Rotation} documents the exact convention). Display orientations
+ * compose on top of the guest's: the {@code left_rotation} slot carries
+ * {@code R_placement ⊗ q_guest}, never the guest quaternion alone. An unrotated placement takes
+ * the identity fast path in {@link Rotation} and is byte-for-byte the pure translation it always
+ * was.
+ *
+ * <p><b>Armor-stand limitation.</b> A placement's yaw composes honestly into an armor stand's body
+ * and head yaw (Minecraft yaw is one angle about one axis, so the composition is addition), and
+ * its position is rotated like everything else — but a placement's <b>pitch and roll cannot be
+ * honestly applied to an armor stand</b>. A stand has no body pitch or roll on the wire; its only
+ * angular state is the six per-part pose rotations, which are euler angles in each part's own
+ * model frame, and folding a world-frame tilt into them would silently distort the guest's pose
+ * rather than turn the stand. So the pose axes are left exactly as the guest set them: a stand
+ * inside a pitched or rolled placement moves to the right place and faces the right way, but
+ * stands upright. Displays, which carry a real orientation quaternion, have no such limitation.
  */
 public final class PacketEventsRenderer implements Renderer {
 
@@ -275,14 +294,15 @@ public final class PacketEventsRenderer implements Renderer {
         if (t == null) {
             return;
         }
+        // The guest's own quaternion is what is stored (and replayed to late joiners); the
+        // placement rotation is composed onto it only on the way out.
         t.qx = (float) qx;
         t.qy = (float) qy;
         t.qz = (float) qz;
         t.qw = (float) qw;
         broadcast(metadata(t.clientId,
                 intData(MD_TRANSFORM_INTERP_DURATION, (int) overTicks),
-                new EntityData<>(MD_LEFT_ROTATION, EntityDataTypes.QUATERNION,
-                        new Quaternion4f(t.qx, t.qy, t.qz, t.qw))));
+                new EntityData<>(MD_LEFT_ROTATION, EntityDataTypes.QUATERNION, wireRotation(t))));
     }
 
     @Override
@@ -510,15 +530,26 @@ public final class PacketEventsRenderer implements Renderer {
         broadcast(new WrapperPlayServerSoundEffect(
                 new StaticSound(location, null),
                 SoundCategory.fromId(category),
-                new Vector3d(origin.worldX(x), origin.worldY(y), origin.worldZ(z)),
+                worldPoint(x, y, z),
                 (float) volume, (float) pitch, 0L));
     }
 
+    /**
+     * The emission point is a point, so it is rotated with the origin; the offset triple is a
+     * direction, so it is rotated <em>without</em> it. For {@code count > 0} that triple is a
+     * per-axis spread rather than a vector — rotating it turns an axis-aligned box into the
+     * component-wise magnitudes of a turned one, which is the closest a three-scalar spread can
+     * come to following the placement, and the sign it may pick up is harmless because the client
+     * multiplies each component by a symmetric gaussian.
+     */
     @Override
     public void emitParticle(ParticleSpec.Emission e) {
+        Rotation r = origin.rotation();
         broadcast(new WrapperPlayServerParticle(particle(e.particle()), true,
-                new Vector3d(origin.worldX(e.x()), origin.worldY(e.y()), origin.worldZ(e.z())),
-                new Vector3f((float) e.offsetX(), (float) e.offsetY(), (float) e.offsetZ()),
+                worldPoint(e.x(), e.y(), e.z()),
+                new Vector3f((float) r.rotatedX(e.offsetX(), e.offsetY(), e.offsetZ()),
+                        (float) r.rotatedY(e.offsetX(), e.offsetY(), e.offsetZ()),
+                        (float) r.rotatedZ(e.offsetX(), e.offsetY(), e.offsetZ())),
                 (float) e.speed(), e.count()));
     }
 
@@ -585,8 +616,9 @@ public final class PacketEventsRenderer implements Renderer {
      * viewer at the end state instead of desyncing them mid-flight.
      */
     private void spawnTo(Player viewer, Tracked t) {
+        float yaw = wireYaw(t, t.yaw);
         sendTo(viewer, new WrapperPlayServerSpawnEntity(t.clientId, Optional.of(t.uuid),
-                entityType(t.kind), worldPos(t), 0f, t.yaw, t.yaw, 0, Optional.empty()));
+                entityType(t.kind), worldPos(t), 0f, yaw, yaw, 0, Optional.empty()));
         List<EntityData<?>> data = new ArrayList<>();
         switch (t.kind) {
             case BLOCK_DISPLAY -> {
@@ -623,7 +655,7 @@ public final class PacketEventsRenderer implements Renderer {
         }
         sendTo(viewer, metadata(t.clientId, data));
         if (t.kind == EntityKind.ARMOR_STAND) {
-            sendTo(viewer, new WrapperPlayServerEntityHeadLook(t.clientId, t.yaw));
+            sendTo(viewer, new WrapperPlayServerEntityHeadLook(t.clientId, yaw));
             for (int slot = 0; slot < t.equipment.length; slot++) {
                 if (t.equipment[slot] != null) {
                     sendTo(viewer, equipmentPacket(t, slot, t.equipment[slot]));
@@ -632,13 +664,12 @@ public final class PacketEventsRenderer implements Renderer {
         }
     }
 
-    private static void addDisplayTransform(List<EntityData<?>> data, Tracked t) {
+    private void addDisplayTransform(List<EntityData<?>> data, Tracked t) {
         data.add(new EntityData<>(MD_TRANSLATION, EntityDataTypes.VECTOR3F,
                 new Vector3f(0f, 0f, 0f)));
         data.add(new EntityData<>(MD_SCALE, EntityDataTypes.VECTOR3F,
                 new Vector3f(t.sx, t.sy, t.sz)));
-        data.add(new EntityData<>(MD_LEFT_ROTATION, EntityDataTypes.QUATERNION,
-                new Quaternion4f(t.qx, t.qy, t.qz, t.qw)));
+        data.add(new EntityData<>(MD_LEFT_ROTATION, EntityDataTypes.QUATERNION, wireRotation(t)));
         data.add(byteData(MD_BILLBOARD, (byte) t.billboardMode));
     }
 
@@ -707,7 +738,54 @@ public final class PacketEventsRenderer implements Renderer {
     /** Body yaw and head yaw both move: a turned body with a fixed head reads as broken. */
     private void sendYaw(Tracked t) {
         broadcast(teleport(t));
-        broadcast(new WrapperPlayServerEntityHeadLook(t.clientId, t.currentYaw));
+        broadcast(new WrapperPlayServerEntityHeadLook(t.clientId, wireYaw(t, t.currentYaw)));
+    }
+
+    /**
+     * The yaw that goes on the wire for a guest-set yaw. Armor stands turn with the placement, so
+     * their yaw carries the placement's; the other kinds do not use the entity yaw field for
+     * anything the guest can see (displays orient by the {@code left_rotation} quaternion, which
+     * already carries the placement rotation, and item entities have no visible facing), so
+     * folding it in there would double-rotate a display.
+     */
+    private float wireYaw(Tracked t, float guestYaw) {
+        return t.kind == EntityKind.ARMOR_STAND ? origin.rotation().composeYaw(guestYaw) : guestYaw;
+    }
+
+    /** The guest's display rotation with the placement's composed onto it: {@code R ⊗ q_guest}. */
+    private Quaternion4f wireRotation(Tracked t) {
+        float[] q = origin.rotation().compose(t.qx, t.qy, t.qz, t.qw);
+        return new Quaternion4f(q[0], q[1], q[2], q[3]);
+    }
+
+    // --- what one entity's next packet would carry ---
+    //
+    // Package-private views of the three values the placement rotation changes, so the mapping
+    // from guest values to wire values can be asserted without a live server behind PacketEvents.
+    // They read the same fields the packet builders above read, through the same helpers.
+
+    /** The absolute world position of {@code id}'s target, as {@code {x, y, z}}. */
+    double[] outgoingPosition(int id) {
+        Tracked t = entities.get(id);
+        return new double[] {origin.worldX(t.x, t.y, t.z), origin.worldY(t.x, t.y, t.z),
+            origin.worldZ(t.x, t.y, t.z)};
+    }
+
+    /** The {@code left_rotation} quaternion of {@code id}, as {@code {x, y, z, w}}. */
+    float[] outgoingRotation(int id) {
+        return origin.rotation().compose(entities.get(id).qx, entities.get(id).qy,
+                entities.get(id).qz, entities.get(id).qw);
+    }
+
+    /** The yaw {@code id}'s spawn/teleport packets carry. */
+    float outgoingYaw(int id) {
+        Tracked t = entities.get(id);
+        return wireYaw(t, t.yaw);
+    }
+
+    /** One origin-relative point mapped into the world: {@code origin + R · local}. */
+    private Vector3d worldPoint(double x, double y, double z) {
+        return new Vector3d(origin.worldX(x, y, z), origin.worldY(x, y, z), origin.worldZ(x, y, z));
     }
 
     /** A teleport to where the entity visually is — never to a tween's destination. */
@@ -716,9 +794,8 @@ public final class PacketEventsRenderer implements Renderer {
     }
 
     private WrapperPlayServerEntityTeleport teleportTo(Tracked t, double x, double y, double z) {
-        return new WrapperPlayServerEntityTeleport(t.clientId,
-                new Vector3d(origin.worldX(x), origin.worldY(y), origin.worldZ(z)),
-                t.currentYaw, 0f, false);
+        return new WrapperPlayServerEntityTeleport(t.clientId, worldPoint(x, y, z),
+                wireYaw(t, t.currentYaw), 0f, false);
     }
 
     /**
@@ -727,7 +804,7 @@ public final class PacketEventsRenderer implements Renderer {
      * the newcomer mid-flight.
      */
     private Vector3d worldPos(Tracked t) {
-        return new Vector3d(origin.worldX(t.x), origin.worldY(t.y), origin.worldZ(t.z));
+        return worldPoint(t.x, t.y, t.z);
     }
 
     private static EntityData<?> intData(int index, int value) {
