@@ -893,16 +893,27 @@ public final class BillboardCommand {
     }
 
     /**
-     * What one coordinate offers: {@code ~} first (the reason relative coordinates exist), then
-     * the player's own coordinate on this axis floored to a whole number — the block they are
-     * standing in, which is where someone eyeballing a spot means. Console gets only {@code ~}'s
-     * absence: it has no position, so only the literal hint would be a lie.
+     * What one coordinate offers: the player's own floored coordinates as cumulative runs from
+     * this axis to {@code z} — on {@code x} that is {@code "10"}, {@code "10 20"} and
+     * {@code "10 20 30"} — so one click can fill everything that remains. A suggestion with
+     * spaces spans nodes: the client inserts the text and the parser re-splits it into the
+     * following arguments. {@code ~} is deliberately not offered (shorter to type than to pick),
+     * and console gets nothing: it has no position, so any hint would be a lie.
      */
     private static SuggestionProvider<CommandSourceStack> coordinateSuggestions(Axis axis) {
         return (ctx, builder) -> {
             if (ctx.getSource().getSender() instanceof Player p) {
-                builder.suggest("~");
-                builder.suggest(String.valueOf((long) Math.floor(axis.of(p))));
+                StringBuilder run = new StringBuilder();
+                for (Axis a : Axis.values()) {
+                    if (a.compareTo(axis) < 0) {
+                        continue;
+                    }
+                    if (!run.isEmpty()) {
+                        run.append(' ');
+                    }
+                    run.append((long) Math.floor(a.of(p)));
+                    builder.suggest(run.toString());
+                }
             }
             return builder.buildFuture();
         };
