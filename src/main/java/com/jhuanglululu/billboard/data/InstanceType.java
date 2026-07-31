@@ -29,6 +29,6 @@ public enum InstanceType {
                 return v;
             }
         }
-        throw new IllegalArgumentException("unknown instance type: " + token);
+        throw new IllegalArgumentException("Unknown instance type: " + token);
     }
 }

@@ -37,12 +37,11 @@ class MessageFormatsTest {
         // Animation-level: resume takes the animation, because every placement of it is stopped.
         String animation = MessageFormats.pauseHintDetail("demo", "spot1", true);
         assertTrue(animation.contains("/billboard resume demo"));
-        assertFalse(animation.contains("/billboard resume spot1"));
+        assertFalse(animation.contains("/billboard resume demo/spot1"));
 
-        // Placement-level: resume takes the placement id, and only this spot is affected.
+        // Placement-level: resume takes the qualified animation/id, and only this spot is affected.
         String placement = MessageFormats.pauseHintDetail("demo", "spot1", false);
-        assertTrue(placement.contains("/billboard resume spot1"));
-        assertFalse(placement.contains("/billboard resume demo"));
+        assertTrue(placement.contains("/billboard resume demo/spot1"));
     }
 
     @Test

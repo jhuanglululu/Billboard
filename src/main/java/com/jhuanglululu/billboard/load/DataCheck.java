@@ -1,14 +1,11 @@
 package com.jhuanglululu.billboard.load;
 
-import com.jhuanglululu.billboard.data.AnimationSettings;
 import com.jhuanglululu.billboard.data.Placement;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 
 /**
  * Load-time cross-checks of the persisted placements against the world they have to run in: every placement
@@ -38,12 +35,11 @@ public final class DataCheck {
      * @param placements the persisted placements
      * @param loaded     the animation names whose modules validated
      * @param worlds     the world names the server has
-     * @param settings   per-animation settings lookup (whitelist/blacklist), may return null
      * @param groupIds   the known group ids
      * @return one issue per unusable placement, in placement order
      */
     public static List<LoadIssue> check(Collection<Placement> placements, Set<String> loaded,
-            Set<String> worlds, Function<String, AnimationSettings> settings, Set<String> groupIds) {
+            Set<String> worlds, Set<String> groupIds) {
         List<LoadIssue> issues = new ArrayList<>();
         for (Placement p : placements) {
             if (!loaded.contains(p.animation())) {
@@ -56,7 +52,7 @@ public final class DataCheck {
                         "world \"" + p.world() + "\" does not exist on this server"));
                 continue;
             }
-            String bad = unusableEntry(p, settings.apply(p.animation()), groupIds);
+            String bad = unusableEntry(p, groupIds);
             if (bad != null) {
                 issues.add(LoadIssue.placement(p.key(), "visibility entry \"" + bad
                         + "\" is neither a known group nor a valid player name"));
@@ -71,13 +67,10 @@ public final class DataCheck {
      * Only the consulted list is checked: a stale whitelist under {@code visibility = blacklist}
      * changes nothing on screen, so reporting it would be noise.
      */
-    private static String unusableEntry(Placement p, AnimationSettings settings, Set<String> groups) {
-        if (settings == null) {
-            return null;
-        }
+    private static String unusableEntry(Placement p, Set<String> groups) {
         Set<String> consulted = switch (p.visibility()) {
-            case WHITELIST -> settings.whitelist();
-            case BLACKLIST -> settings.blacklist();
+            case WHITELIST -> p.whitelist();
+            case BLACKLIST -> p.blacklist();
             case EVERYONE, NONE -> Set.of();
         };
         for (String entry : consulted) {
@@ -112,11 +105,5 @@ public final class DataCheck {
             }
         }
         return keys;
-    }
-
-    /** Convenience overload taking the settings map directly. */
-    public static List<LoadIssue> check(Collection<Placement> placements, Set<String> loaded,
-            Set<String> worlds, Map<String, AnimationSettings> settings, Set<String> groupIds) {
-        return check(placements, loaded, worlds, settings::get, groupIds);
     }
 }

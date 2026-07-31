@@ -21,6 +21,7 @@ class CaptureOrchestratorTest {
         Integer armedFor;               // the ticks it was armed with; null = never armed
         CaptureSummary result;
         boolean stopped;
+        int entities;                   // what it has standing right now, moved by the test
 
         FakeSource(String animation, String placementId) {
             this.animation = animation;
@@ -49,7 +50,7 @@ class CaptureOrchestratorTest {
 
         @Override
         public int liveEntities() {
-            return 0;
+            return entities;
         }
 
         @Override
@@ -84,10 +85,10 @@ class CaptureOrchestratorTest {
     }
 
     private static final CaptureSummary SAMPLED =
-            new CaptureSummary(30, true, 10, 40, 600, 30, 2);
+            new CaptureSummary(30, 25, true, 10, 40, 600, 30, 2);
 
     private static final CaptureSummary STOPPED_EARLY =
-            new CaptureSummary(60, false, 10, 40, 1200, 60, 4);
+            new CaptureSummary(60, 50, false, 10, 40, 1200, 60, 4);
 
     @Test
     void aTargetWithNoInstancesStillArmsAndThenReportsNoSamples() {
@@ -168,6 +169,53 @@ class CaptureOrchestratorTest {
         assertTrue(orchestrator.idle());
         assertFalse(orchestrator.stop("demo", 61), "nothing left to stop");
         assertEquals(1, reports.size(), "and no second report");
+    }
+
+    /**
+     * A 3-tick window samples ticks 1, 2 and 3. With one instance standing 2 entities, a second
+     * joining at tick 2 with 3, and the first emptying before tick 3, the per-tick sums are
+     * 2, 5 and 3: ten in total over three ticks, peaking at five.
+     */
+    @Test
+    void entitiesAreSampledEachTickAsTheSumOverArmedInstances() {
+        CaptureOrchestrator orchestrator = new CaptureOrchestrator();
+        List<CaptureReport> reports = new ArrayList<>();
+        FakeSource first = new FakeSource("demo", "spot1");
+        first.entities = 2;
+        List<FakeSource> live = new ArrayList<>(List.of(first));
+
+        orchestrator.start("demo", "demo", null, 3, 0, live, reports::add);
+        orchestrator.tick(1, live);
+
+        FakeSource second = new FakeSource("demo", "spot2");
+        second.entities = 3;
+        live.add(second);
+        orchestrator.tick(2, live);
+
+        first.entities = 0;
+        orchestrator.tick(3, live);
+        orchestrator.tick(4, live);
+
+        assertEquals(1, reports.size());
+        CaptureReport.EntitySamples entities = reports.get(0).entities();
+        assertEquals(10L, entities.sum());
+        assertEquals(3L, entities.ticks(), "the tick that delivers the report is not a sample");
+        assertEquals(5, entities.peak());
+    }
+
+    @Test
+    void aWindowWithNoInstanceSamplesNoEntitiesRatherThanAveragingZeroes() {
+        CaptureOrchestrator orchestrator = new CaptureOrchestrator();
+        List<CaptureReport> reports = new ArrayList<>();
+
+        orchestrator.start("demo", "demo", null, 3, 0, List.of(), reports::add);
+        for (long tick = 1; tick <= 4; tick++) {
+            orchestrator.tick(tick, List.of());
+        }
+
+        assertEquals(1, reports.size());
+        assertEquals(0L, reports.get(0).entities().ticks());
+        assertEquals(0.0, reports.get(0).entities().mean());
     }
 
     @Test

@@ -43,13 +43,13 @@ public record LoadIssue(Scope scope, String subject, String detail) {
     /** The visible line: what was skipped, never the whole reason. */
     public String line() {
         return MessageFormats.PREFIX + "<red>Skipped " + scope.label() + " <white>"
-                + MessageFormats.escape(subject) + "</white></red> <gray>(hover for details)</gray>";
+                + MessageFormats.escape(subject) + "</white></red>";
     }
 
-    /** The hover detail: the reason plus how to clear it. */
+    /** The hover detail: how to clear it, then the reason. */
     public String hover() {
-        return "<red>" + MessageFormats.escape(detail) + "</red>"
-                + "\n<gray>fix it and run /billboard reload</gray>";
+        return "<gray>fix it and run /billboard reload</gray>"
+                + "\n<red>" + MessageFormats.escape(detail) + "</red>";
     }
 
     /** The console/log one-liner (no MiniMessage), for {@code getLogger}. */

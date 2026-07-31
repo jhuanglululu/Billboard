@@ -26,6 +26,10 @@ import java.util.function.Consumer;
  * else's instead of running past the report. <b>One capture per target</b>: a second request
  * reports the time remaining instead of restarting, so two admins measuring at once cannot
  * silently truncate each other's window.
+ *
+ * <p>The tick pass is also where entity counts are sampled: the engine measures instructions and
+ * bytes but never sees the entities an instance is standing, so each pass adds up what the armed
+ * instances have and folds it into the session's running sum and peak.
  */
 public final class CaptureOrchestrator {
 
@@ -34,7 +38,7 @@ public final class CaptureOrchestrator {
 
     /** An empty, incomplete window: what an instance that never ran a captured tick reports. */
     private static final CaptureSummary NO_CAPTURE =
-            new CaptureSummary(0, false, 0, 0, 0, 0, 0);
+            new CaptureSummary(0, 0, false, 0, 0, 0, 0, 0);
 
     /**
      * The outcome of asking for a capture.
@@ -60,6 +64,11 @@ public final class CaptureOrchestrator {
         // dies mid-window stays in both, so its truncated window is still collected.
         final List<StatsSource> armed = new ArrayList<>();
         final Set<StatsSource> armedSet = Collections.newSetFromMap(new IdentityHashMap<>());
+        // Entity counts are Billboard's to sample: the engine has no idea how many entities an
+        // instance is standing. Accumulated in place, so a tick pass allocates nothing.
+        long entitySum;
+        long entityTicks;
+        int entityPeak;
 
         Session(String target, String animation, String placementId, long windowTicks,
                 long startTick, Consumer<CaptureReport> onReport) {
@@ -80,6 +89,22 @@ public final class CaptureOrchestrator {
         void arm(StatsSource s) {
             armed.add(s);
             armedSet.add(s);
+        }
+
+        /** One tick's entity figure: what every armed instance has standing, added up. */
+        void sampleEntities() {
+            if (armed.isEmpty()) {
+                return;     // nothing is running it: an averaged zero would be a made-up sample
+            }
+            int sum = 0;
+            for (int i = 0; i < armed.size(); i++) {
+                sum += armed.get(i).liveEntities();
+            }
+            entitySum += sum;
+            entityTicks++;
+            if (sum > entityPeak) {
+                entityPeak = sum;
+            }
         }
     }
 
@@ -142,6 +167,9 @@ public final class CaptureOrchestrator {
                     }
                 }
             }
+            if (currentTick <= session.deadlineTick) {
+                session.sampleEntities();
+            }
             // One tick past the deadline: the tick that takes the last sample is dispatched
             // after this pass, so collecting on the deadline itself would read a window that
             // has not closed yet.
@@ -178,16 +206,19 @@ public final class CaptureOrchestrator {
     private static CaptureReport collect(Session session, long currentTick, boolean stopped) {
         List<CaptureReport.InstanceStats> rows = new ArrayList<>();
         for (StatsSource s : session.armed) {
-            rows.add(row(s, currentTick));
+            rows.add(row(s));
         }
         long elapsed = Math.min(session.windowTicks, Math.max(0, currentTick - session.startTick));
-        return new CaptureReport(session.target, session.windowTicks, elapsed, stopped, rows);
+        return new CaptureReport(session.target, session.windowTicks, elapsed, stopped, rows,
+                new CaptureReport.EntitySamples(session.entitySum, session.entityTicks,
+                        session.entityPeak));
     }
 
-    private static CaptureReport.InstanceStats row(StatsSource s, long currentTick) {
+    private static CaptureReport.InstanceStats row(StatsSource s) {
         return new CaptureReport.InstanceStats(s.label(),
+                s.animation() + "/" + s.placementId(),
                 s.captureResult().orElse(NO_CAPTURE),
                 s.stats().orElse(NO_SNAPSHOT),
-                s.liveEntities(), Math.max(0, currentTick - s.startTick()));
+                s.liveEntities());
     }
 }

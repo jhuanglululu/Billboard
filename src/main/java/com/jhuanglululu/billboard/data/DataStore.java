@@ -22,15 +22,17 @@ import java.util.TreeMap;
 import java.util.function.Consumer;
 
 /**
- * The plugin-managed persistent state: placements, per-animation settings (paused flag +
- * whitelist/blacklist), groups, and per-player log mutes. In-memory and mutable; the plugin calls
- * {@link #save} after any change. No Bukkit API, so it is fully unit-testable.
+ * The plugin-managed persistent state: placements (including their visibility lists),
+ * per-animation settings (the paused flag), groups, and per-player log mutes. In-memory and
+ * mutable; the plugin calls {@link #save} after any change. No Bukkit API, so it is fully
+ * unit-testable.
  *
  * <p>It lives in a <b>folder</b> ({@code plugins/Billboard/data/}) of three files:
  * <pre>
  * data.json          {"groups": {id: [players]}, "log-muted": [names]}
- * animations.jsonl   one object per line: name, paused, whitelist, blacklist
- * placements.jsonl   one object per line: animation, id, world, x, y, z, type, visibility, paused
+ * animations.jsonl   one object per line: name, paused
+ * placements.jsonl   one object per line: animation, id, world, x, y, z, type, visibility,
+ *                    paused, whitelist, blacklist
  * </pre>
  *
  * <p><b>Why line-delimited JSON.</b> The two growing collections are records, and one corrupt
@@ -186,8 +188,6 @@ public final class DataStore {
                 JsonObject o = new JsonObject();
                 o.addProperty("name", e.getKey());
                 o.addProperty("paused", e.getValue().paused());
-                o.add("whitelist", stringArray(e.getValue().whitelist()));
-                o.add("blacklist", stringArray(e.getValue().blacklist()));
                 animationLines.add(o);
             }
             writeLines(dir.resolve(ANIMATIONS_JSONL), animationLines);
@@ -204,6 +204,8 @@ public final class DataStore {
                 o.addProperty("type", p.type().wire());
                 o.addProperty("visibility", p.visibility().wire());
                 o.addProperty("paused", p.paused());
+                o.add("whitelist", stringArray(p.whitelist()));
+                o.add("blacklist", stringArray(p.blacklist()));
                 placementLines.add(o);
             }
             writeLines(dir.resolve(PLACEMENTS_JSONL), placementLines);
@@ -259,13 +261,13 @@ public final class DataStore {
         }
     }
 
+    /**
+     * Reads animations.jsonl. Files written before the visibility lists moved onto the placement
+     * still carry {@code whitelist}/{@code blacklist} here; those keys are simply not read, so an
+     * old file loads without complaint and is rewritten without them on the next save.
+     */
     private void readAnimations(Path file) {
-        forEachRecord(file, record -> {
-            AnimationSettings s = animation(string(record, "name"));
-            s.setPaused(bool(record, "paused"));
-            s.whitelist().addAll(strings(record.get("whitelist")));
-            s.blacklist().addAll(strings(record.get("blacklist")));
-        });
+        forEachRecord(file, record -> animation(string(record, "name")).setPaused(bool(record, "paused")));
     }
 
     private void readPlacements(Path file) {
@@ -275,7 +277,9 @@ public final class DataStore {
                     number(record, "x"), number(record, "y"), number(record, "z"),
                     InstanceType.fromWire(string(record, "type")),
                     VisibilityMode.fromWire(string(record, "visibility")),
-                    bool(record, "paused"));
+                    bool(record, "paused"),
+                    new LinkedHashSet<>(strings(record.get("whitelist"))),
+                    new LinkedHashSet<>(strings(record.get("blacklist"))));
             placements.put(p.key(), p);
         });
     }

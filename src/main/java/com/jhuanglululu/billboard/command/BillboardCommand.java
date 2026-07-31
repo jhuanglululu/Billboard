@@ -24,6 +24,7 @@ import com.mojang.brigadier.suggestion.SuggestionProvider;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -31,6 +32,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import net.kyori.adventure.audience.Audience;
 import org.bukkit.Server;
 import org.bukkit.command.CommandSender;
@@ -160,17 +162,36 @@ public final class BillboardCommand {
             reply(ctx, unknown.get());
             return Command.SINGLE_SUCCESS;
         }
+        // Each token is parsed on its own so the rejected word — and only it — can be highlighted;
+        // one shared catch could not tell which of the two the message should name.
+        String typeToken = StringArgumentType.getString(ctx, "type");
+        InstanceType type;
         try {
-            InstanceType type = InstanceType.fromWire(StringArgumentType.getString(ctx, "type"));
-            VisibilityMode visibility = VisibilityMode.fromWire(StringArgumentType.getString(ctx, "visibility"));
-            data.putPlacement(new Placement(animation, id, world, x, y, z, type, visibility));
-            save.run();
-            reply(ctx, "<green>Placed <white>" + esc(animation) + "/" + esc(id) + "</white> at "
-                    + fmt(x) + " " + fmt(y) + " " + fmt(z) + " in " + esc(world) + "</green>");
+            type = InstanceType.fromWire(typeToken);
         } catch (IllegalArgumentException e) {
-            reply(ctx, "<red>" + esc(e.getMessage()) + "</red>");
+            reply(ctx, unknownToken("instance type", typeToken));
+            return Command.SINGLE_SUCCESS;
         }
+        String visibilityToken = StringArgumentType.getString(ctx, "visibility");
+        VisibilityMode visibility;
+        try {
+            visibility = VisibilityMode.fromWire(visibilityToken);
+        } catch (IllegalArgumentException e) {
+            reply(ctx, unknownToken("visibility mode", visibilityToken));
+            return Command.SINGLE_SUCCESS;
+        }
+        data.putPlacement(new Placement(animation, id, world, x, y, z, type, visibility));
+        save.run();
+        reply(ctx, MessageFormats.PREFIX + "<green>Placed <white>" + esc(animation) + "/" + esc(id)
+                + "</white> at <white>" + fmt(x) + ", " + fmt(y) + ", " + fmt(z)
+                + "</white> in <white>" + esc(world) + "</white></green>");
         return Command.SINGLE_SUCCESS;
+    }
+
+    /** {@code Unknown <what>: <token>} — the one shape every rejected enum token gets. */
+    private static String unknownToken(String what, String token) {
+        return MessageFormats.PREFIX + "<red>Unknown " + what + ": <white>" + esc(token)
+                + "</white></red>";
     }
 
     // --- remove <animation> <id> ---
@@ -184,12 +205,19 @@ public final class BillboardCommand {
                         String id = StringArgumentType.getString(ctx, "id");
                         if (data.removePlacement(animation, id).isPresent()) {
                             save.run();
-                            reply(ctx, "<green>Removed <white>" + esc(animation) + "/" + esc(id) + "</white></green>");
+                            reply(ctx, MessageFormats.PREFIX + "<green>Removed <white>" + esc(animation)
+                                    + "/" + esc(id) + "</white></green>");
                         } else {
-                            reply(ctx, "<red>No such placement " + esc(animation) + "/" + esc(id) + "</red>");
+                            reply(ctx, noSuchPlacement(animation, id));
                         }
                         return Command.SINGLE_SUCCESS;
                     })));
+    }
+
+    /** The one shape {@code remove} and the filter commands share for an id that names nothing. */
+    private static String noSuchPlacement(String animation, String id) {
+        return MessageFormats.PREFIX + "<red>No such placement <white>" + esc(animation) + "/"
+                + esc(id) + "</white></red>";
     }
 
     // --- pause|resume <animation | placement-id> ---
@@ -220,18 +248,19 @@ public final class BillboardCommand {
             case ANIMATION -> {
                 data.animation(resolved.animation()).setPaused(paused);
                 save.run();
-                reply(ctx, "<green>" + verb + " animation <white>" + esc(resolved.animation())
-                        + "</white>" + (paused ? "" : " (error-pause cleared)") + "</green>");
+                reply(ctx, MessageFormats.PREFIX + "<green>" + verb + " animation <white>"
+                        + esc(resolved.animation()) + "</white>"
+                        + (paused ? "" : " (error-pause cleared)") + "</green>");
             }
             case PLACEMENT -> {
                 Placement p = data.placement(resolved.animation(), resolved.id()).orElseThrow();
                 data.putPlacement(p.withPaused(paused));
                 save.run();
-                reply(ctx, "<green>" + verb + " placement <white>" + esc(p.key()) + "</white></green>");
+                reply(ctx, MessageFormats.PREFIX + "<green>" + verb + " placement <white>"
+                        + esc(p.key()) + "</white></green>");
             }
             case AMBIGUOUS -> replyAmbiguous(ctx, resolved);
-            case UNKNOWN -> reply(ctx, "<red>No animation or placement named <white>" + esc(target)
-                    + "</white></red>");
+            case UNKNOWN -> reply(ctx, noSuchTarget(target));
         }
         return Command.SINGLE_SUCCESS;
     }
@@ -242,12 +271,19 @@ public final class BillboardCommand {
      */
     private void replyAmbiguous(CommandContext<CommandSourceStack> ctx, PauseTarget resolved) {
         String line = MessageFormats.PREFIX + "<red>Placement id <white>" + esc(resolved.id())
-                + "</white> is used by " + resolved.candidates().size() + " animations</red>";
+                + "</white> is used by <white>" + resolved.candidates().size()
+                + "</white> animations</red>";
         StringBuilder hover = new StringBuilder("<gray>name the animation instead, or one of:</gray>");
         for (String key : resolved.candidates()) {
             hover.append("\n<white>").append(esc(key)).append("</white>");
         }
         ctx.getSource().getSender().sendMessage(Messages.withHover(line, hover.toString()));
+    }
+
+    /** The one shape a word that resolves to neither an animation nor a placement gets. */
+    private static String noSuchTarget(String target) {
+        return MessageFormats.PREFIX + "<red>No animation or placement named <white>" + esc(target)
+                + "</white></red>";
     }
 
     /**
@@ -270,9 +306,10 @@ public final class BillboardCommand {
                     + s.diff().removed().size() + "</white></green>"
                     + (s.errors().isEmpty() ? "" : " <red>(" + s.errors().size() + " error(s))</red>");
             StringBuilder hover = new StringBuilder();
-            hover.append("added: ").append(esc(String.valueOf(s.diff().added())))
-                    .append("\nchanged: ").append(esc(String.valueOf(s.diff().changed())))
-                    .append("\nremoved: ").append(esc(String.valueOf(s.diff().removed())));
+            hover.append("added: <gray>").append(esc(String.valueOf(s.diff().added())))
+                    .append("</gray>\nchanged: <gray>").append(esc(String.valueOf(s.diff().changed())))
+                    .append("</gray>\nremoved: <gray>").append(esc(String.valueOf(s.diff().removed())))
+                    .append("</gray>");
             for (String err : s.errors()) {
                 hover.append("\n<red>").append(esc(err)).append("</red>");
             }
@@ -301,8 +338,8 @@ public final class BillboardCommand {
         }
         String line = MessageFormats.PREFIX + "<green>Exported <white>registry.rs</white> — <white>"
                 + counts[0] + "</white> block(s), <white>" + counts[1] + "</white> item(s)</green>";
-        String hover = "<gray>plugins/Billboard/registry.rs</gray>"
-                + "\n<gray>point $BILLBOARD_REGISTRY at it and rebuild the animation</gray>";
+        String hover = "<white>plugins/Billboard/registry.rs</white>"
+                + "\n<green>point <white>$BILLBOARD_REGISTRY</white> at it and rebuild the animation</green>";
         ctx.getSource().getSender().sendMessage(Messages.withHover(line, hover));
         return Command.SINGLE_SUCCESS;
     }
@@ -319,8 +356,8 @@ public final class BillboardCommand {
     private int setMuted(CommandContext<CommandSourceStack> ctx, boolean mute) {
         String name = ctx.getSource().getSender().getName();
         if (!config.get().logViewers().contains(name)) {
-            reply(ctx, "<red>You are not a log viewer, so there is nothing to " + (mute ? "mute" : "unmute")
-                    + ".</red>");
+            reply(ctx, MessageFormats.PREFIX + "<red>You are not a log viewer, so there is nothing to "
+                    + (mute ? "mute" : "unmute") + "</red>");
             return Command.SINGLE_SUCCESS;
         }
         if (mute) {
@@ -329,8 +366,8 @@ public final class BillboardCommand {
             data.logMuted().remove(name);
         }
         save.run();
-        reply(ctx, "<green>Guest log output is now <white>" + (mute ? "muted" : "unmuted")
-                + "</white> for you.</green>");
+        reply(ctx, MessageFormats.PREFIX + "<green>Guest log output is now "
+                + (mute ? "muted" : "unmuted") + " for you</green>");
         return Command.SINGLE_SUCCESS;
     }
 
@@ -374,8 +411,9 @@ public final class BillboardCommand {
     private int startCapture(CommandContext<CommandSourceStack> ctx, int seconds) {
         String target = StringArgumentType.getString(ctx, "target");
         if (seconds < 1 || seconds > MAX_CAPTURE_SECONDS) {
-            reply(ctx, "<red>Capture length must be <white>1</white>..<white>" + MAX_CAPTURE_SECONDS
-                    + "</white> seconds, got " + seconds + "</red>");
+            reply(ctx, MessageFormats.PREFIX + "<red>Capture length must be <white>1.."
+                    + MAX_CAPTURE_SECONDS + "</white> seconds, got <white>" + seconds
+                    + "</white></red>");
             return Command.SINGLE_SUCCESS;
         }
         PauseTarget resolved = PauseTarget.resolve(target, knownAnimations(), data.placements());
@@ -390,21 +428,21 @@ public final class BillboardCommand {
         CaptureOrchestrator.CaptureStart start = captures.startCapture(target, animation,
                 placementId, windowTicks, reportTo(ctx));
         if (!start.started()) {
-            send(ctx, StatsFormats.captureAlreadyRunning(target, start.remainingTicks()));
+            reply(ctx, StatsFormats.captureAlreadyRunning(target, start.remainingTicks()));
             return Command.SINGLE_SUCCESS;
         }
         reply(ctx, StatsFormats.captureStarted(target, seconds, start.armed()));
         if (start.armed() == 0) {
             // Loud, immediately: otherwise the user waits out the whole window for a report that
             // can only say "nothing ran".
-            send(ctx, StatsFormats.noInstances(target, seconds));
+            reply(ctx, StatsFormats.noInstances(target));
         }
         return Command.SINGLE_SUCCESS;
     }
 
     /**
      * {@code /billboard stats stop <target>} — end the window now and report what it saw. The
-     * report goes to whoever started the capture, so the {@code [click]} on their own capturing
+     * report goes to whoever started the capture, so the {@code [stop]} on their own capturing
      * line lands back with them.
      */
     private int stopCapture(CommandContext<CommandSourceStack> ctx) {
@@ -431,8 +469,7 @@ public final class BillboardCommand {
             return false;
         }
         if (resolved.kind() == PauseTarget.Kind.UNKNOWN) {
-            reply(ctx, "<red>No animation or placement named <white>" + esc(target)
-                    + "</white></red>");
+            reply(ctx, noSuchTarget(target));
             return false;
         }
         return true;
@@ -457,20 +494,19 @@ public final class BillboardCommand {
 
     private static void sendReport(Audience audience, CaptureReport report) {
         if (!report.anySamples()) {
-            StatsFormats.Line line = StatsFormats.reportWithoutSamples(report);
-            audience.sendMessage(Messages.withHover(line.visible(), line.hover()));
+            Messages.send(audience, StatsFormats.reportWithoutSamples(report));
             return;
         }
         StatsFormats.Line header = StatsFormats.reportHeader(report);
         audience.sendMessage(Messages.withHover(header.visible(), header.hover()));
-        for (CaptureReport.InstanceStats instance : report.instances()) {
-            StatsFormats.Line line = StatsFormats.instanceLine(instance, report.windowTicks());
-            audience.sendMessage(Messages.withHover(line.visible(), line.hover()));
+        for (CaptureReport.MergedInstance instance : report.merged()) {
+            StatsFormats.Line line = StatsFormats.instanceLine(instance, report.elapsedTicks());
+            if (line.hover() == null) {
+                Messages.send(audience, line.visible());
+            } else {
+                audience.sendMessage(Messages.withHover(line.visible(), line.hover()));
+            }
         }
-    }
-
-    private static void send(CommandContext<CommandSourceStack> ctx, StatsFormats.Line line) {
-        ctx.getSource().getSender().sendMessage(Messages.withHover(line.visible(), line.hover()));
     }
 
     // --- list [animation] ---
@@ -490,35 +526,49 @@ public final class BillboardCommand {
     }
 
     private void listAll(CommandContext<CommandSourceStack> ctx) {
-        reply(ctx, MessageFormats.PREFIX + "<gray>placements:</gray>");
+        reply(ctx, MessageFormats.PREFIX + "<green>placements:</green>");
         for (Placement p : data.placements()) {
             boolean paused = p.paused()
                     || data.existingAnimation(p.animation()).map(AnimationSettings::paused).orElse(false);
             String line = "<white>" + esc(p.key()) + "</white> <gray>(" + p.type().wire() + ", "
                     + p.visibility().wire() + (paused ? ", <red>paused</red>" : "") + ")</gray>";
-            String hover = "world " + esc(p.world()) + " at " + fmt(p.x()) + " " + fmt(p.y()) + " " + fmt(p.z());
+            String hover = "<white>" + esc(p.world()) + " <gray>at</gray> " + fmt(p.x()) + ", "
+                    + fmt(p.y()) + ", " + fmt(p.z()) + "</white>";
             ctx.getSource().getSender().sendMessage(Messages.withHover(line, hover));
         }
     }
 
     private void listAnimation(CommandContext<CommandSourceStack> ctx, String animation) {
-        AnimationSettings s = data.existingAnimation(animation).orElse(new AnimationSettings());
-        reply(ctx, MessageFormats.PREFIX + "<white>" + esc(animation) + "</white> "
-                + (s.paused() ? "<red>[paused]</red> " : "")
-                + "<gray>whitelist=" + esc(String.valueOf(s.whitelist()))
-                + " blacklist=" + esc(String.valueOf(s.blacklist())) + "</gray>");
+        boolean paused = data.existingAnimation(animation).map(AnimationSettings::paused).orElse(false);
+        reply(ctx, MessageFormats.PREFIX + "<white>" + esc(animation) + "</white>"
+                + (paused ? " <red>[paused]</red>" : ""));
         for (Placement p : data.placements()) {
             if (!p.animation().equals(animation)) {
                 continue;
             }
-            reply(ctx, "  <white>" + esc(p.id()) + "</white> <gray>(" + p.type().wire() + ", "
-                    + p.visibility().wire() + (p.paused() ? ", <red>paused</red>" : "")
-                    + ")</gray> <dark_gray>viewers: " + eligibleNames(p) + "</dark_gray>");
+            String line = "<gray><white>" + esc(p.id()) + "</white> - <white>" + p.type().wire()
+                    + "</white>, <white>" + p.visibility().wire() + "</white>"
+                    + (p.paused() ? ", <red>paused</red>" : "") + "</gray>";
+            ctx.getSource().getSender().sendMessage(Messages.withHover(line, placementHover(p)));
         }
     }
 
+    /**
+     * The detail behind one line of {@code /billboard list <animation>}: the list the placement's
+     * mode actually consults (omitted entirely when it consults neither), then who can see it now.
+     */
+    private String placementHover(Placement p) {
+        StringBuilder hover = new StringBuilder();
+        if (p.visibility() == VisibilityMode.WHITELIST || p.visibility() == VisibilityMode.BLACKLIST) {
+            boolean whitelist = p.visibility() == VisibilityMode.WHITELIST;
+            hover.append("<white>").append(whitelist ? "whitelist" : "blacklist")
+                    .append("</white> <gray>").append(entries(p.filter(whitelist))).append("</gray>\n");
+        }
+        return hover.append("<white>viewers</white> <gray>").append(eligibleNames(p))
+                .append("</gray>").toString();
+    }
+
     private String eligibleNames(Placement p) {
-        AnimationSettings s = data.existingAnimation(p.animation()).orElse(new AnimationSettings());
         double radius = config.get().proximity().radius();
         StringBuilder sb = new StringBuilder();
         for (Player pl : server.getOnlinePlayers()) {
@@ -527,7 +577,7 @@ public final class BillboardCommand {
             boolean inRange = world.equals(p.world())
                     && sq(loc.getX() - p.x()) + sq(loc.getY() - p.y()) + sq(loc.getZ() - p.z()) <= radius * radius;
             boolean visible = com.jhuanglululu.billboard.placement.Eligibility.visibleTo(
-                    p.visibility(), s.whitelist(), s.blacklist(), data.groupsView(), pl.getName());
+                    p.visibility(), p.whitelist(), p.blacklist(), data.groupsView(), pl.getName());
             if (inRange && visible) {
                 sb.append(sb.isEmpty() ? "" : ", ").append(esc(pl.getName()));
             }
@@ -535,50 +585,67 @@ public final class BillboardCommand {
         return sb.isEmpty() ? "none" : sb.toString();
     }
 
-    // --- whitelist|blacklist <add|remove|list> <animation> <player|group> ---
+    // --- whitelist|blacklist add|remove <animation> <id> <entry> | list <animation> <id> ---
 
+    /**
+     * The two visibility lists are per placement, so both forms address one the way spawn and
+     * remove do — {@code <animation> <id>} — rather than an animation alone.
+     */
     private LiteralArgumentBuilder<CommandSourceStack> listFilter(String which) {
         boolean whitelist = which.equals("whitelist");
         return Commands.literal(which)
                 .requires(this::isAdmin)
                 .then(Commands.literal("add").then(
                     Commands.argument("animation", StringArgumentType.word()).suggests(animationSuggestions()).then(
+                    Commands.argument("id", StringArgumentType.word()).suggests(placementIdSuggestions()).then(
                     Commands.argument("entry", StringArgumentType.word()).suggests(playerOrGroupSuggestions())
-                            .executes(ctx -> editFilter(ctx, whitelist, true)))))
+                            .executes(ctx -> editFilter(ctx, whitelist, true))))))
                 .then(Commands.literal("remove").then(
                     Commands.argument("animation", StringArgumentType.word()).suggests(animationSuggestions()).then(
-                    Commands.argument("entry", StringArgumentType.word())
-                            .executes(ctx -> editFilter(ctx, whitelist, false)))))
+                    Commands.argument("id", StringArgumentType.word()).suggests(placementIdSuggestions()).then(
+                    Commands.argument("entry", StringArgumentType.word()).suggests(filterEntrySuggestions(whitelist))
+                            .executes(ctx -> editFilter(ctx, whitelist, false))))))
                 .then(Commands.literal("list").then(
-                    Commands.argument("animation", StringArgumentType.word()).suggests(animationSuggestions())
+                    Commands.argument("animation", StringArgumentType.word()).suggests(animationSuggestions()).then(
+                    Commands.argument("id", StringArgumentType.word()).suggests(placementIdSuggestions())
                             .executes(ctx -> {
                                 String animation = StringArgumentType.getString(ctx, "animation");
-                                Set<String> set = filterSet(animation, whitelist);
-                                reply(ctx, MessageFormats.PREFIX + "<white>" + esc(animation) + "</white> " + which
-                                        + ": <gray>" + esc(String.valueOf(set)) + "</gray>");
+                                String id = StringArgumentType.getString(ctx, "id");
+                                Optional<Placement> p = data.placement(animation, id);
+                                if (p.isEmpty()) {
+                                    reply(ctx, noSuchPlacement(animation, id));
+                                    return Command.SINGLE_SUCCESS;
+                                }
+                                reply(ctx, MessageFormats.PREFIX + "<white>" + esc(animation) + "/"
+                                        + esc(id) + "</white> <green>" + which + ":</green> <gray>"
+                                        + entries(p.get().filter(whitelist)) + "</gray>");
                                 return Command.SINGLE_SUCCESS;
-                            })));
+                            }))));
     }
 
     private int editFilter(CommandContext<CommandSourceStack> ctx, boolean whitelist, boolean add) {
         String animation = StringArgumentType.getString(ctx, "animation");
+        String id = StringArgumentType.getString(ctx, "id");
         String entry = StringArgumentType.getString(ctx, "entry");
-        Set<String> set = filterSet(animation, whitelist);
-        if (add) {
-            set.add(entry);
-        } else {
-            set.remove(entry);
+        Optional<Placement> found = data.placement(animation, id);
+        if (found.isEmpty()) {
+            reply(ctx, noSuchPlacement(animation, id));
+            return Command.SINGLE_SUCCESS;
         }
+        Placement p = found.get();
+        Set<String> updated = new LinkedHashSet<>(p.filter(whitelist));
+        if (add) {
+            updated.add(entry);
+        } else {
+            updated.remove(entry);
+        }
+        data.putPlacement(p.withFilter(whitelist, updated));
         save.run();
-        reply(ctx, "<green>" + (add ? "Added " : "Removed ") + esc(entry) + " "
-                + (add ? "to " : "from ") + (whitelist ? "whitelist" : "blacklist") + " of <white>"
-                + esc(animation) + "</white></green>");
+        reply(ctx, MessageFormats.PREFIX + "<green>" + (add ? "Added" : "Removed") + " <white>"
+                + esc(entry) + "</white> " + (add ? "to" : "from") + " "
+                + (whitelist ? "whitelist" : "blacklist") + " of <white>" + esc(animation) + "/"
+                + esc(id) + "</white></green>");
         return Command.SINGLE_SUCCESS;
-    }
-
-    private Set<String> filterSet(String animation, boolean whitelist) {
-        AnimationSettings s = data.animation(animation);
-        return whitelist ? s.whitelist() : s.blacklist();
     }
 
     // --- group create|add|remove|list ---
@@ -591,7 +658,8 @@ public final class BillboardCommand {
                         String id = StringArgumentType.getString(ctx, "id");
                         data.group(id);
                         save.run();
-                        reply(ctx, "<green>Created group <white>" + esc(id) + "</white></green>");
+                        reply(ctx, MessageFormats.PREFIX + "<green>Created group <white>" + esc(id)
+                                + "</white></green>");
                         return Command.SINGLE_SUCCESS;
                     })))
                 .then(Commands.literal("add").then(
@@ -604,14 +672,15 @@ public final class BillboardCommand {
                             .executes(ctx -> groupEdit(ctx, false)))))
                 .then(Commands.literal("list")
                     .executes(ctx -> {
-                        reply(ctx, MessageFormats.PREFIX + "groups: <gray>" + esc(String.valueOf(data.groupIds())) + "</gray>");
+                        reply(ctx, MessageFormats.PREFIX + "<green>groups:</green> <gray>"
+                                + entries(data.groupIds()) + "</gray>");
                         return Command.SINGLE_SUCCESS;
                     })
                     .then(Commands.argument("id", StringArgumentType.word()).suggests(groupSuggestions())
                             .executes(ctx -> {
                                 String id = StringArgumentType.getString(ctx, "id");
                                 reply(ctx, MessageFormats.PREFIX + "<white>" + esc(id) + "</white>: <gray>"
-                                        + esc(String.valueOf(data.group(id))) + "</gray>");
+                                        + entries(data.group(id)) + "</gray>");
                                 return Command.SINGLE_SUCCESS;
                             })));
     }
@@ -625,8 +694,9 @@ public final class BillboardCommand {
             data.group(id).remove(player);
         }
         save.run();
-        reply(ctx, "<green>" + (add ? "Added " : "Removed ") + esc(player) + " "
-                + (add ? "to " : "from ") + "group <white>" + esc(id) + "</white></green>");
+        reply(ctx, MessageFormats.PREFIX + "<green>" + (add ? "Added" : "Removed") + " <white>"
+                + esc(player) + "</white> " + (add ? "to" : "from") + " group <white>" + esc(id)
+                + "</white></green>");
         return Command.SINGLE_SUCCESS;
     }
 
@@ -643,26 +713,37 @@ public final class BillboardCommand {
         String animation = StringArgumentType.getString(ctx, "animation");
         String field = StringArgumentType.getString(ctx, "field");
         String value = StringArgumentType.getString(ctx, "value");
-        try {
-            int changed = 0;
-            for (Placement p : List.copyOf(data.placements())) {
-                if (!p.animation().equals(animation)) {
-                    continue;
-                }
-                Placement updated = switch (field) {
-                    case "visibility" -> p.withVisibility(VisibilityMode.fromWire(value));
-                    case "type" -> p.withType(InstanceType.fromWire(value));
-                    default -> throw new IllegalArgumentException("unknown field: " + field);
-                };
-                data.putPlacement(updated);
-                changed++;
-            }
-            save.run();
-            reply(ctx, "<green>Set " + esc(field) + "=" + esc(value) + " on " + changed
-                    + " placement(s) of <white>" + esc(animation) + "</white></green>");
-        } catch (IllegalArgumentException e) {
-            reply(ctx, "<red>" + esc(e.getMessage()) + "</red>");
+        // The field and its value are validated up front, before any placement is touched, so the
+        // message can name the one rejected word — and so a bad value changes nothing at all.
+        if (!field.equals("visibility") && !field.equals("type")) {
+            reply(ctx, MessageFormats.PREFIX + "<red>Unknown field: <white>" + esc(field)
+                    + "</white></red>");
+            return Command.SINGLE_SUCCESS;
         }
+        VisibilityMode visibility = null;
+        InstanceType type = null;
+        try {
+            if (field.equals("visibility")) {
+                visibility = VisibilityMode.fromWire(value);
+            } else {
+                type = InstanceType.fromWire(value);
+            }
+        } catch (IllegalArgumentException e) {
+            reply(ctx, unknownToken(field.equals("visibility") ? "visibility mode" : "instance type", value));
+            return Command.SINGLE_SUCCESS;
+        }
+        int changed = 0;
+        for (Placement p : List.copyOf(data.placements())) {
+            if (!p.animation().equals(animation)) {
+                continue;
+            }
+            data.putPlacement(visibility != null ? p.withVisibility(visibility) : p.withType(type));
+            changed++;
+        }
+        save.run();
+        reply(ctx, MessageFormats.PREFIX + "<green>Set <white>" + esc(field) + "=" + esc(value)
+                + "</white> on <white>" + changed + "</white> placement(s) of <white>"
+                + esc(animation) + "</white></green>");
         return Command.SINGLE_SUCCESS;
     }
 
@@ -715,6 +796,19 @@ public final class BillboardCommand {
         };
     }
 
+    /** What is actually on the addressed placement's list — the only removable words. */
+    private SuggestionProvider<CommandSourceStack> filterEntrySuggestions(boolean whitelist) {
+        return (ctx, builder) -> {
+            String animation = tryGetString(ctx, "animation");
+            String id = tryGetString(ctx, "id");
+            if (animation != null && id != null) {
+                data.placement(animation, id)
+                        .ifPresent(p -> p.filter(whitelist).forEach(builder::suggest));
+            }
+            return builder.buildFuture();
+        };
+    }
+
     private SuggestionProvider<CommandSourceStack> playerOrGroupSuggestions() {
         return (ctx, builder) -> {
             for (Player p : server.getOnlinePlayers()) {
@@ -753,6 +847,17 @@ public final class BillboardCommand {
             return p.getWorld().getName();
         }
         return "world";
+    }
+
+    /**
+     * How every set the command layer prints is rendered: the escaped entries joined with
+     * {@code ", "}, or a literal {@code (none)} — never Java's {@code [a, b]}, whose brackets read
+     * as syntax the user could have typed.
+     */
+    private static String entries(Collection<String> values) {
+        return values.isEmpty()
+                ? "(none)"
+                : values.stream().map(BillboardCommand::esc).collect(Collectors.joining(", "));
     }
 
     private static String esc(String raw) {

@@ -109,6 +109,50 @@ class ProximityControllerTest {
     }
 
     @Test
+    void eachPlacementIsFilteredByItsOwnLists() {
+        // The lists are per placement: two placements of one animation, same spot, opposite
+        // audiences. Reading them off the animation could not tell these two apart.
+        DataStore data = new DataStore();
+        data.putPlacement(new Placement("demo", "forAlice", "world", 0, 64, 0,
+                InstanceType.SHARED, VisibilityMode.WHITELIST, false, Set.of("alice"), Set.of()));
+        data.putPlacement(new Placement("demo", "notAlice", "world", 0, 64, 0,
+                InstanceType.SHARED, VisibilityMode.BLACKLIST, false, Set.of(), Set.of("alice")));
+        FakePositions pos = new FakePositions();
+        FakeLifecycle life = new FakeLifecycle();
+        ProximityController<String> c = new ProximityController<>(pos, life, data, () -> config(100));
+
+        pos.players.add(viewer(UUID.randomUUID(), "alice", 5));
+        c.check(0);
+        assertEquals(1, life.live.size(), "only the whitelisting placement may run for alice");
+
+        pos.players.clear();
+        pos.players.add(viewer(UUID.randomUUID(), "bob", 5));
+        c.check(1);
+        // alice's instance lingers; bob starts the blacklisting one, which excludes only alice.
+        assertEquals(2, life.started);
+    }
+
+    @Test
+    void groupMembershipIsExpandedForAPlacementList() {
+        DataStore data = new DataStore();
+        data.putPlacement(new Placement("demo", "vipOnly", "world", 0, 64, 0,
+                InstanceType.SHARED, VisibilityMode.WHITELIST, false, Set.of("vips"), Set.of()));
+        data.group("vips").add("alice");
+        FakePositions pos = new FakePositions();
+        FakeLifecycle life = new FakeLifecycle();
+        ProximityController<String> c = new ProximityController<>(pos, life, data, () -> config(0));
+
+        pos.players.add(viewer(UUID.randomUUID(), "bob", 5));
+        c.check(0);
+        assertEquals(0, life.started, "bob is in no group on the list");
+
+        pos.players.clear();
+        pos.players.add(viewer(UUID.randomUUID(), "alice", 5));
+        c.check(1);
+        assertEquals(1, life.started);
+    }
+
+    @Test
     void pauseStopsSharedInstanceImmediately() {
         DataStore data = new DataStore();
         data.putPlacement(new Placement("demo", "sq", "world", 0, 64, 0,

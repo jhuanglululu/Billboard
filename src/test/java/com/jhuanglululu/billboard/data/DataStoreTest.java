@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -19,13 +21,11 @@ class DataStoreTest {
 
         DataStore out = new DataStore();
         out.putPlacement(new Placement("demo", "square", "world", 10.5, 64.0, -20.0,
-                InstanceType.SHARED, VisibilityMode.WHITELIST));
+                InstanceType.SHARED, VisibilityMode.WHITELIST, false,
+                new LinkedHashSet<>(List.of("alice", "vips")), Set.of("mallory")));
         out.putPlacement(new Placement("clock", "lobby", "world_nether", 1, 2, 3,
                 InstanceType.PER_PLAYER, VisibilityMode.BLACKLIST));
-        AnimationSettings demo = out.animation("demo");
-        demo.setPaused(true);
-        demo.whitelist().addAll(List.of("alice", "vips"));
-        demo.blacklist().add("mallory");
+        out.animation("demo").setPaused(true);
         out.group("vips").addAll(List.of("alice", "bob"));
         out.save(data);
 
@@ -39,15 +39,17 @@ class DataStoreTest {
         assertEquals(-20.0, p.z());
         assertEquals(InstanceType.SHARED, p.type());
         assertEquals(VisibilityMode.WHITELIST, p.visibility());
+        // The visibility lists ride on the placement, in the order they were added.
+        assertEquals(List.of("alice", "vips"), List.copyOf(p.whitelist()));
+        assertEquals(List.of("mallory"), List.copyOf(p.blacklist()));
 
         Placement q = in.placement("clock", "lobby").orElseThrow();
         assertEquals(InstanceType.PER_PLAYER, q.type());
         assertEquals(VisibilityMode.BLACKLIST, q.visibility());
+        assertTrue(q.whitelist().isEmpty(), "a placement given no lists loads with empty ones");
+        assertTrue(q.blacklist().isEmpty());
 
-        AnimationSettings loadedDemo = in.animation("demo");
-        assertTrue(loadedDemo.paused());
-        assertEquals(List.of("alice", "vips"), List.copyOf(loadedDemo.whitelist()));
-        assertEquals(List.of("mallory"), List.copyOf(loadedDemo.blacklist()));
+        assertTrue(in.animation("demo").paused());
 
         assertEquals(List.of("alice", "bob"), List.copyOf(in.group("vips")));
     }
@@ -131,6 +133,32 @@ class DataStoreTest {
         assertEquals(2, store.issues().size(), () -> "issues: " + store.issues());
         assertTrue(store.issues().get(0).contains("placements.jsonl line 2"), store.issues().get(0));
         assertTrue(store.issues().get(1).contains("placements.jsonl line 4"), store.issues().get(1));
+    }
+
+    @Test
+    void animationLevelVisibilityListsFromOlderFilesAreIgnoredNotAnError(@TempDir Path dir)
+            throws IOException {
+        // The lists used to live on the animation. There is no migration: the old keys must load
+        // silently, keep the paused flag, and be gone from the file after the next save.
+        Path data = dir.resolve("data");
+        Files.createDirectories(data);
+        Files.writeString(data.resolve("animations.jsonl"),
+                "{\"name\":\"demo\",\"paused\":true,\"whitelist\":[\"alice\"],\"blacklist\":[\"mallory\"]}\n");
+        Files.writeString(data.resolve("placements.jsonl"),
+                "{\"animation\":\"demo\",\"id\":\"a\",\"world\":\"world\",\"x\":0.0,\"y\":0.0,\"z\":0.0,"
+                        + "\"type\":\"shared\",\"visibility\":\"whitelist\",\"paused\":false}\n");
+
+        DataStore store = DataStore.load(data);
+
+        assertTrue(store.issues().isEmpty(), () -> "issues: " + store.issues());
+        assertTrue(store.animation("demo").paused());
+        Placement p = store.placement("demo", "a").orElseThrow();
+        assertTrue(p.whitelist().isEmpty(), "the old animation-level entries must not be adopted");
+        assertTrue(p.blacklist().isEmpty());
+
+        store.save(data);
+        String rewritten = Files.readString(data.resolve("animations.jsonl"));
+        assertFalse(rewritten.contains("whitelist"), rewritten);
     }
 
     @Test

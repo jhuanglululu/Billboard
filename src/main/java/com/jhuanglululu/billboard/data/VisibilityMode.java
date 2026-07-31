@@ -27,6 +27,6 @@ public enum VisibilityMode {
                 return v;
             }
         }
-        throw new IllegalArgumentException("unknown visibility mode: " + token);
+        throw new IllegalArgumentException("Unknown visibility mode: " + token);
     }
 }

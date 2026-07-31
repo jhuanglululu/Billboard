@@ -26,14 +26,14 @@ public final class MessageFormats {
 
     /** {@code [Billboard] <animation> owned by <owner> logged <message>}. */
     public static String guestLog(String animation, String owner, String message) {
-        return PREFIX + "<white>" + escape(animation) + "</white> owned by <yellow>" + escape(owner)
-                + "</yellow> logged <gray>" + escape(message) + "</gray>";
+        return PREFIX + "<white>" + escape(animation) + "</white> <gray>owned by</gray> <white>"
+                + escape(owner) + "</white> <gray>logged</gray> <white>" + escape(message) + "</white>";
     }
 
     /** The error-styled variant for guest {@code fail} / kills. */
     public static String guestFail(String animation, String owner, String message) {
-        return PREFIX + "<red><white>" + escape(animation) + "</white> owned by <yellow>" + escape(owner)
-                + "</yellow> failed: " + escape(message) + "</red>";
+        return PREFIX + "<red>" + escape(animation) + " owned by " + escape(owner)
+                + " failed: " + escape(message) + "</red>";
     }
 
     /**
@@ -48,7 +48,8 @@ public final class MessageFormats {
     /**
      * The hover detail for {@link #pauseHint}: which flag holds it and the exact command that
      * clears that flag — {@code resume <animation>} for the animation-level pause (which stops
-     * every placement of it), {@code resume <id>} for this placement alone.
+     * every placement of it), {@code resume <animation>/<id>} for this placement alone (the
+     * qualified form, so the hint never hands out a command an id collision would reject).
      */
     public static String pauseHintDetail(String animation, String id, boolean animationLevel) {
         if (animationLevel) {
@@ -58,6 +59,7 @@ public final class MessageFormats {
         }
         return "<gray>this placement is paused; other placements of <white>" + escape(animation)
                 + "</white> still run</gray>"
-                + "\n<gray>resume with <white>/billboard resume " + escape(id) + "</white></gray>";
+                + "\n<gray>resume with <white>/billboard resume " + escape(animation) + "/" + escape(id)
+                + "</white></gray>";
     }
 }

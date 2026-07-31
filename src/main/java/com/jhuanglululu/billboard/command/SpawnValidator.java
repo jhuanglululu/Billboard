@@ -26,7 +26,8 @@ public final class SpawnValidator {
         String names = loaded.isEmpty()
                 ? "(none)"
                 : loaded.stream().map(MessageFormats::escape).collect(Collectors.joining(", "));
-        return Optional.of("<red>Unknown animation <white>" + MessageFormats.escape(animation)
+        return Optional.of(MessageFormats.PREFIX + "<red>Unknown animation <white>"
+                + MessageFormats.escape(animation)
                 + "</white> — not loaded. Loaded: <gray>" + names + "</gray></red>");
     }
 }

@@ -1,7 +1,6 @@
 package com.jhuanglululu.billboard.stats;
 
 import com.jhuanglululu.billboard.message.MessageFormats;
-import com.jhuanglululu.wasmachine.runtime.MachineInstance.CaptureSummary;
 import com.jhuanglululu.wasmachine.runtime.MachineInstance.StatsSnapshot;
 
 import java.util.ArrayList;
@@ -14,13 +13,15 @@ import java.util.Map;
  * {@link MessageFormats}, so the wording, the number formatting and the escaping of untrusted
  * names are all unit-testable; the caller deserializes and sends.
  *
- * <p><b>Layout.</b> An instance's numbers are a block, not a sentence: its name, then one indented
- * line per group. A comma then only ever means thousands, which is the whole reason for the shape
- * — a comma-chained line of comma-grouped numbers cannot be read at a glance, and glancing is what
- * this command is for.
+ * <p><b>Layout.</b> An instance's numbers are a block, not a sentence: its name, then one line per
+ * field. A comma then only ever means thousands, which is the whole reason for the shape — a
+ * comma-chained line of comma-grouped numbers cannot be read at a glance, and glancing is what
+ * this command is for. Nothing is indented: the chat box wraps at arbitrary widths, so leading
+ * space only makes a wrapped line ragged.
  *
- * <p><b>Colour.</b> Yellow labels the fields, white carries the numbers, gray is everything else.
- * The {@code [Billboard]} prefix keeps whatever {@link MessageFormats} says it is.
+ * <p><b>Colour.</b> Yellow labels the fields, white carries the numbers, gray is the connective
+ * text between them. The {@code [Billboard]} prefix keeps whatever {@link MessageFormats} says it
+ * is.
  */
 public final class StatsFormats {
     
@@ -33,12 +34,6 @@ public final class StatsFormats {
     public static final int TICKS_PER_SECOND = 20;
     
     private static final double MIB = 1024.0 * 1024.0;
-    
-    /**
-     * The block indents: one space before an instance's name, three before its numbers.
-     */
-    private static final String NAME_INDENT = " ";
-    private static final String DETAIL_INDENT = "   ";
     
     /**
      * A visible line and its hover detail.
@@ -56,9 +51,10 @@ public final class StatsFormats {
      */
     public static Line pluginSummary(PluginStats stats) {
         String visible = MessageFormats.PREFIX + "<white>" + stats.activeInstances()
-                + "</white> <gray>instance(s) on</gray> <white>" + stats.poolThreads()
+                + "</white> <gray>" + plural(stats.activeInstances(), "instance")
+                + " on</gray> <white>" + stats.poolThreads()
                 + "</white><gray>/</gray><white>" + stats.maxThreads()
-                + "</white> <gray>worker thread(s)</gray>";
+                + "</white> <gray>worker " + plural(stats.maxThreads(), "thread") + "</gray>";
         StringBuilder hover = new StringBuilder();
         hover.append("<yellow>placements</yellow> <white>").append(stats.placements()).append("</white>");
         if (stats.instancesByAnimation().isEmpty()) {
@@ -66,8 +62,7 @@ public final class StatsFormats {
         } else {
             for (Map.Entry<String, Integer> e : sorted(stats.instancesByAnimation())) {
                 hover.append("\n<yellow>").append(MessageFormats.escape(e.getKey()))
-                        .append("</yellow> <white>").append(e.getValue())
-                        .append("</white> <gray>instance(s)</gray>");
+                        .append("</yellow> <white>").append(e.getValue()).append("</white>");
             }
         }
         return new Line(visible, hover.toString());
@@ -97,21 +92,17 @@ public final class StatsFormats {
                 + "s</white> <gray>(</gray><white>" + armed + "</white> "
                 + "<gray>" + instanceStr + ")</gray> "
                 + "<click:run_command:'/billboard stats stop " + target + "'>"
-                + "<red>[click]</red></click>";
+                + "<red>[stop]</red></click>";
     }
     
     /**
-     * The refusal when a capture on the same target is already running.
+     * The refusal when a capture on the same target is already running: one capture per target, so
+     * the running window keeps its samples instead of being restarted under whoever asked for it.
      */
-    public static Line captureAlreadyRunning(String target, long remainingTicks) {
-        String visible = MessageFormats.PREFIX + "<gray>already capturing</gray> <yellow>"
-                + MessageFormats.escape(target) + "</yellow><gray>,</gray> <white>"
+    public static String captureAlreadyRunning(String target, long remainingTicks) {
+        return MessageFormats.PREFIX + "<gray>already capturing</gray> <white>"
+                + MessageFormats.escape(target) + "</white><gray>,</gray> <white>"
                 + seconds(remainingTicks) + "s</white> <gray>left</gray>";
-        
-        String hover = "<gray>one capture per target: the running window keeps its samples "
-                + "instead of being restarted under you</gray>"
-                + "\n<gray>the report goes to whoever started it</gray>";
-        return new Line(visible, hover);
     }
     
     /**
@@ -124,23 +115,20 @@ public final class StatsFormats {
     
     /**
      * The loud warning that the target resolved but nothing is running it. The window is armed
-     * anyway, so this says how to make it produce something rather than just refusing.
+     * anyway — an instance that starts inside it is captured too — so this warns rather than
+     * refuses.
      */
-    public static Line noInstances(String target, int seconds) {
-        String visible = MessageFormats.PREFIX + "<red>nothing is running <white>"
-                + MessageFormats.escape(target) + "</white></red> <gray>(hover)</gray>";
-        String hover = "<red>no instance of it exists right now, so there is nothing to measure"
-                + "</red>\n<gray>stand in range of a placement, or have an eligible player do it — "
-                + "an instance that starts within the next " + seconds
-                + "s is captured too</gray>"
-                + "\n<gray>a paused animation or placement never starts: check /billboard list</gray>";
-        return new Line(visible, hover);
+    public static String noInstances(String target) {
+        return MessageFormats.PREFIX + "<red>nothing is running <white>"
+                + MessageFormats.escape(target) + "</white></red>";
     }
     
     // --- the report ---
     
     /**
-     * The header line: what was captured, over how long, and what it cost per tick.
+     * The header line: what was captured, over how long, and what it cost in total. The hover
+     * carries the three derived figures — per-tick instructions, memory and entities — that the
+     * one visible line has no room for.
      */
     public static Line reportHeader(CaptureReport report) {
         String span = report.stopped()
@@ -150,71 +138,69 @@ public final class StatsFormats {
                 : "<gray>over</gray> <white>" + seconds(report.windowTicks()) + "s</white>";
         String visible = MessageFormats.PREFIX + "<white>" + MessageFormats.escape(report.target())
                 + "</white> " + span + "<gray>:</gray> <white>"
-                + mean(report.meanInstructionsPerTick()) + "</white> <gray>instr/tick across</gray> "
-                + "<white>" + report.sampledInstances() + "</white> <gray>instance(s)</gray>";
-        String hover = "<yellow>window instructions</yellow> <white>"
-                + count(report.windowInstructions()) + "</white>"
+                + count(report.windowInstructions()) + "</white> <gray>instructions across</gray> "
+                + "<white>" + report.sampledInstances() + "</white> <gray>"
+                + plural(report.sampledInstances(), "instance") + "</gray>";
+        String hover = "<yellow>instr/tick</yellow> <white>"
+                + mean(report.meanInstructionsPerTick()) + "</white> <gray>across</gray> <white>"
+                + report.sampledInstances() + " "
+                + plural(report.sampledInstances(), "instance") + "</white><gray>,</gray> <white>total of "
+                + report.placements() + " " + plural(report.placements(), "placement") + "</white>"
                 + "\n<yellow>memory</yellow> <white>" + mib(report.meanMemoryBytes())
-                + "</white> <gray>mean, peak</gray> <white>" + mib(report.peakMemoryBytes())
-                + "</white>"
-                + "\n<yellow>entities</yellow> <white>" + report.liveEntities() + "</white>"
-                + (report.partial()
-                ? "\n<gray>partial: an instance ended or joined inside the window</gray>"
-                : "")
-                + "\n<gray>per-tick figures are the sum over instances — what the animation costs "
-                + "the server each tick</gray>";
+                + "</white> <gray>mean,</gray> <white>" + mib(report.peakMemoryBytes())
+                + "</white> <gray>peak</gray>"
+                + "\n<yellow>entities</yellow> <white>" + mean(report.entities().mean())
+                + "</white> <gray>mean,</gray> <white>" + count(report.entities().peak())
+                + "</white> <gray>peak</gray>";
         return new Line(visible, hover);
     }
     
     /**
-     * One instance's block: its name, then its numbers on indented lines. The hover holds window
-     * facts only — nothing is measured outside a capture, so there is nothing else honest to show.
+     * One placement-owner's block: its name, then one line per field, every run of the window
+     * merged (a restart mid-window leaves one engine window per run — printed apart they read as
+     * duplicates). Live gauges (tasks, entities, cap) are the newest run's. The hover, present
+     * only when the runs do not cover the window, explains the missing ticks: time no instance
+     * was alive, between a death and its restart or before the first spawn.
      *
-     * @param requestedTicks the window length that was asked for, which only the report knows
+     * @param elapsedTicks how long the window actually ran, the merged runs' ticks are held against
+     * @return the block, with a {@code null} hover when the runs cover the whole window
      */
-    public static Line instanceLine(CaptureReport.InstanceStats instance, long requestedTicks) {
-        CaptureSummary c = instance.capture();
-        StatsSnapshot s = instance.snapshot();
-        String name = NAME_INDENT + "<white>" + MessageFormats.escape(instance.label()) + "</white>";
+    public static Line instanceLine(CaptureReport.MergedInstance instance, long elapsedTicks) {
+        String name = "<white>" + MessageFormats.escape(instance.label()) + "</white>";
+        long gap = Math.max(0, elapsedTicks - instance.capturedTicks());
+        String hover = gap == 0 ? null
+                : "<gray>no instance was alive for <white>" + count(gap)
+                + "</white> of the window's <white>" + count(elapsedTicks) + "</white> "
+                + plural(elapsedTicks, "tick") + "</gray>";
         if (!instance.sampled()) {
-            return new Line(name + "\n" + DETAIL_INDENT + "<gray>no ticks captured</gray>",
-                            "<gray>it ran no tick inside the window: it had already ended, or it never "
-                                    + "started</gray>");
+            // It had already ended, or it never started: one line, because there are no numbers.
+            return new Line(name + " <gray>ran no tick in the window</gray>", hover);
         }
+        StatsSnapshot s = instance.newest().snapshot();
         String visible = name
-                + "\n" + DETAIL_INDENT + "<white>" + mean(c.meanInstructions())
-                + "</white> <gray>instr/tick (</gray><white>" + count(c.instructionsMin())
-                + "</white><gray>–</gray><white>" + count(c.instructionsMax()) + "</white><gray>)</gray>"
-                + "\n" + DETAIL_INDENT + "<yellow>mem</yellow> <white>" + mib(s.memoryUsedBytes())
-                + "</white> <gray>(peak</gray> <white>" + mib(c.memoryPeakBytes())
-                + "</white> <gray>of</gray> <white>" + mib(s.memoryCapBytes()) + "</white><gray>)</gray>"
-                + "\n" + DETAIL_INDENT + "<white>" + s.liveTasks()
-                + "</white> <gray>task(s) ·</gray> <white>" + instance.liveEntities()
-                + "</white> <gray>entity(s) ·</gray> <yellow>up</yellow> <white>"
-                + instance.uptimeTicks() + "t</white>";
-        String hover = "<yellow>window</yellow> <white>" + count(c.ticksCaptured())
-                + "</white><gray>/</gray><white>" + count(requestedTicks)
-                + "</white> <gray>tick(s)</gray>"
-                + (c.complete() ? "" : " <gray>(ended early)</gray>")
-                + "\n<yellow>window instructions</yellow> <white>" + count(c.instructionsSum())
-                + "</white>"
-                + "\n<yellow>window memory peak</yellow> <white>" + mib(c.memoryPeakBytes())
-                + "</white>";
+                + "\n<yellow>instance</yellow> <white>" + instance.instanceCount()
+                + "</white> <gray>—</gray> <yellow>uptime</yellow> <white>" + count(instance.activeTicks())
+                + "</white><gray>/</gray><white>" + count(instance.capturedTicks())
+                + "</white> <gray>" + plural(instance.capturedTicks(), "tick") + "</gray>"
+                + "\n<yellow>instr/tick</yellow> <white>" + mean(instance.meanInstructions())
+                + "</white> <gray>(</gray><white>" + count(instance.instructionsMin())
+                + "</white><gray>–</gray><white>" + count(instance.instructionsMax()) + "</white><gray>)</gray>"
+                + "\n<yellow>memory</yellow> <white>" + mib(instance.memoryPeakBytes())
+                + "</white> <gray>peak of</gray> <white>" + mib(s.memoryCapBytes()) + "</white>"
+                + "\n<yellow>tasks</yellow> <white>" + s.liveTasks()
+                + "</white> <gray>—</gray> <yellow>entities</yellow> <white>"
+                + instance.newest().liveEntities() + "</white>";
         return new Line(visible, hover);
     }
     
     /**
-     * The report for a window that ended having sampled nothing at all. Zeroes would read as a
-     * measurement; this says there was none.
+     * The report for a window that ended having sampled nothing at all: no instance was running
+     * and none started. Zeroes would read as a measurement; this says there was none.
      */
-    public static Line reportWithoutSamples(CaptureReport report) {
-        String visible = MessageFormats.PREFIX + "<white>" + MessageFormats.escape(report.target())
+    public static String reportWithoutSamples(CaptureReport report) {
+        return MessageFormats.PREFIX + "<white>" + MessageFormats.escape(report.target())
                 + "</white> <gray>ran nothing in</gray> <white>" + seconds(report.elapsedTicks())
-                + "s</white> <gray>(hover)</gray>";
-        String hover = "<gray>the window closed without a single captured tick — no instance was "
-                + "running and none started</gray>"
-                + "\n<gray>an instance exists only while an eligible player is in range</gray>";
-        return new Line(visible, hover);
+                + "s</white>";
     }
     
     // --- numbers ---
@@ -226,6 +212,14 @@ public final class StatsFormats {
         return trim((double) ticks / TICKS_PER_SECOND);
     }
     
+    /**
+     * The noun to go with a count. Written out rather than left as {@code (s)}, which reads like a
+     * form field.
+     */
+    private static String plural(long count, String noun) {
+        return count == 1 ? noun : noun + "s";
+    }
+
     private static String count(long value) {
         return String.format(Locale.ROOT, "%,d", value);
     }

@@ -2,7 +2,10 @@ package com.jhuanglululu.billboard.stats;
 
 import com.jhuanglululu.wasmachine.runtime.MachineInstance.CaptureSummary;
 import com.jhuanglululu.wasmachine.runtime.MachineInstance.StatsSnapshot;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * What one finished capture window saw, across every instance of the target. Pure arithmetic over
@@ -20,31 +23,130 @@ import java.util.List;
  *                     was stopped early
  * @param stopped      whether someone ended the window before its deadline
  * @param instances    one entry per instance that was armed, in the order they were armed
+ * @param entities     what the window saw of entity counts, sampled tick by tick
  */
 public record CaptureReport(String target, long windowTicks, long elapsedTicks, boolean stopped,
-        List<InstanceStats> instances) {
+        List<InstanceStats> instances, EntitySamples entities) {
 
     public CaptureReport {
         instances = List.copyOf(instances);
     }
 
     /**
+     * Entity counts as the window saw them. The engine counts instructions and bytes but knows
+     * nothing of the entities an instance has standing, so Billboard samples them itself, once a
+     * tick, summed over the armed instances — the same "per-tick figure is the sum over instances"
+     * convention the instruction and memory figures follow.
+     *
+     * @param sum   every per-tick sum added up
+     * @param ticks how many ticks contributed one
+     * @param peak  the largest single-tick sum
+     */
+    public record EntitySamples(long sum, long ticks, int peak) {
+
+        /** A window that sampled nothing: no instance was ever armed on it. */
+        public static final EntitySamples NONE = new EntitySamples(0, 0, 0);
+
+        /** Entities standing at once, averaged over the ticks that were sampled. */
+        public double mean() {
+            return ticks == 0 ? 0 : (double) sum / ticks;
+        }
+    }
+
+    /**
      * One instance's contribution.
      *
-     * @param label        how to name this instance: the owner for {@code per_player}, otherwise
-     *                     the placement id
+     * @param label        how to name this instance: {@code animation/id:owner}, where owner is
+     *                     the viewing player for {@code per_player} and {@code EVERYONE} otherwise
+     * @param placement    the placement key alone ({@code animation/id}), for counting how many
+     *                     placements the window touched whoever owned the instances
      * @param capture      what its window saw; a window that took no samples is still reported
      * @param snapshot     its live gauges as of the end of the window
      * @param liveEntities entities standing at the end of the window
-     * @param uptimeTicks  ticks since this run began, derived from the scheduler's start stamp
      */
-    public record InstanceStats(String label, CaptureSummary capture, StatsSnapshot snapshot,
-            int liveEntities, long uptimeTicks) {
+    public record InstanceStats(String label, String placement, CaptureSummary capture,
+            StatsSnapshot snapshot, int liveEntities) {
 
         /** Whether this instance produced any sample at all. */
         public boolean sampled() {
             return capture.ticksCaptured() > 0;
         }
+    }
+
+    /**
+     * Every capture window one placement-owner pair produced, merged into the single block the
+     * report prints. An instance that dies and is restarted inside the window leaves one engine
+     * window per run; printed separately they read as duplicate rows, so the report merges by
+     * label and keeps the arithmetic here where it is testable.
+     *
+     * @param runs the windows in arming order — the last one is the newest, whose live gauges
+     *             (tasks, entities, memory cap) describe the placement as it stands now
+     */
+    public record MergedInstance(List<InstanceStats> runs) {
+
+        public MergedInstance {
+            runs = List.copyOf(runs);
+        }
+
+        public String label() {
+            return runs.getFirst().label();
+        }
+
+        /** How many instances (engine windows) this block covers. */
+        public int instanceCount() {
+            return runs.size();
+        }
+
+        public long activeTicks() {
+            return runs.stream().mapToLong(r -> r.capture().activeTicks()).sum();
+        }
+
+        public long capturedTicks() {
+            return runs.stream().mapToLong(r -> r.capture().ticksCaptured()).sum();
+        }
+
+        public boolean sampled() {
+            return capturedTicks() > 0;
+        }
+
+        /** Mean over every captured tick of every run — weighted, not a mean of means. */
+        public double meanInstructions() {
+            long ticks = capturedTicks();
+            return ticks == 0 ? 0
+                    : (double) runs.stream().mapToLong(r -> r.capture().instructionsSum()).sum() / ticks;
+        }
+
+        public long instructionsMin() {
+            return runs.stream().filter(InstanceStats::sampled)
+                    .mapToLong(r -> r.capture().instructionsMin()).min().orElse(0);
+        }
+
+        public long instructionsMax() {
+            return runs.stream().mapToLong(r -> r.capture().instructionsMax()).max().orElse(0);
+        }
+
+        public long memoryPeakBytes() {
+            return runs.stream().mapToLong(r -> r.capture().memoryPeakBytes()).max().orElse(0);
+        }
+
+        /** The newest run: the placement as it stands at the end of the window. */
+        public InstanceStats newest() {
+            return runs.getLast();
+        }
+    }
+
+    /** The instances grouped by label in arming order: one entry per placement-owner pair. */
+    public List<MergedInstance> merged() {
+        Map<String, List<InstanceStats>> groups = new LinkedHashMap<>();
+        for (InstanceStats i : instances) {
+            groups.computeIfAbsent(i.label(), k -> new ArrayList<>()).add(i);
+        }
+        return groups.values().stream().map(MergedInstance::new).toList();
+    }
+
+    /** Distinct placements the window touched, whoever owned their instances. */
+    public int placements() {
+        return (int) instances.stream().map(InstanceStats::placement).distinct().count();
     }
 
     /** Whether any instance produced a sample; false means the report has nothing to show. */

@@ -165,7 +165,7 @@ public final class RunningInstance implements StatsSource {
 
     @Override
     public String label() {
-        return MessageFormats.EVERYONE.equals(ownerLabel) ? placement.id() : ownerLabel;
+        return placement.animation() + "/" + placement.id() + ":" + ownerLabel;
     }
 
     @Override

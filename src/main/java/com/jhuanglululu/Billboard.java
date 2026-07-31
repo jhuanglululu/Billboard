@@ -79,10 +79,9 @@ public final class Billboard extends JavaPlugin {
                 () -> data.logMuted(), () -> config.consoleLog());
         for (String issue : data.issues()) {
             // Loud, and only now: the data folder is read before the output routing exists.
-            guestOutput.issue(MessageFormats.PREFIX + "<red>Skipped unreadable saved data</red>"
-                    + " <gray>(hover for details)</gray>",
-                    "<red>" + MessageFormats.escape(issue) + "</red>"
-                    + "\n<gray>plugins/Billboard/data</gray>");
+            guestOutput.issue(MessageFormats.PREFIX + "<red>Skipped unreadable saved data</red>",
+                    "<gray>plugins/Billboard/data</gray>"
+                    + "\n<red>" + MessageFormats.escape(issue) + "</red>");
             getLogger().severe(issue);
         }
         // Validate everything now: every animation and every placement is checked before a single
@@ -179,7 +178,7 @@ public final class Billboard extends JavaPlugin {
         }
         List<LoadIssue> issues = new ArrayList<>(scan.issues());
         issues.addAll(DataCheck.check(data.placements(), animations.keySet(), worlds,
-                name -> data.existingAnimation(name).orElse(null), Set.copyOf(data.groupIds())));
+                Set.copyOf(data.groupIds())));
         skippedPlacements.clear();
         skippedPlacements.addAll(DataCheck.skippedKeys(issues));
         for (LoadIssue issue : issues) {
@@ -266,8 +265,8 @@ public final class Billboard extends JavaPlugin {
         saveData();
         String line = MessageFormats.PREFIX + "<red>Animation <white>" + MessageFormats.escape(animation)
                 + "</white> paused after an error</red>";
-        String hover = MessageFormats.escape(message) + "\n<gray>clear with /billboard resume "
-                + MessageFormats.escape(animation) + "</gray>";
+        String hover = "<gray>clear with /billboard resume " + MessageFormats.escape(animation)
+                + "</gray>\n<red>" + MessageFormats.escape(message) + "</red>";
         getServer().getConsoleSender().sendMessage(Messages.withHover(line, hover));
         getLogger().severe("Animation \"" + animation + "\" paused after an error: " + message
                 + " — clear with /billboard resume " + animation);

@@ -169,13 +169,11 @@ public final class ProximityController<H> {
     }
 
     private List<ViewerPosition> eligibleViewers(Placement p, Iterable<ViewerPosition> online, double radius) {
-        AnimationSettings s = data.existingAnimation(p.animation()).orElse(null);
-        Set<String> whitelist = s != null ? s.whitelist() : Set.of();
-        Set<String> blacklist = s != null ? s.blacklist() : Set.of();
         List<ViewerPosition> out = new ArrayList<>();
         for (ViewerPosition v : online) {
             if (Eligibility.inRange(p, v, radius)
-                    && Eligibility.visibleTo(p.visibility(), whitelist, blacklist, data.groupsView(), v.name())) {
+                    && Eligibility.visibleTo(p.visibility(), p.whitelist(), p.blacklist(),
+                            data.groupsView(), v.name())) {
                 out.add(v);
             }
         }
