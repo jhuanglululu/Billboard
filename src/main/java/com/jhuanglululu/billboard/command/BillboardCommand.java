@@ -138,15 +138,13 @@ public final class BillboardCommand {
                 .build();
     }
 
-    // --- spawn <animation> <id> <x y z> [yaw] [pitch] [roll] <type> <visibility> ---
+    // --- spawn <animation> <id> <x y z> <type> <visibility> [yaw] [pitch] [roll] ---
 
     /**
-     * The three rotation arguments are optional and sit between {@code z} and {@code type}, so the
-     * tree branches to {@code type} after each of them. That is unambiguous rather than merely
-     * lucky: {@code yaw}/{@code pitch}/{@code roll} are doubles and {@code type} is a word, so the
-     * word {@code shared} can only ever parse down the {@code type} branch, whichever depth it is
-     * reached at. Each branch needs its own node objects, hence {@link #spawnTail()} building a
-     * fresh one per call.
+     * The three rotation arguments trail the command as a nested optional chain: {@code type} and
+     * {@code visibility} sit right after the coordinates, so their word suggestions appear at a
+     * fixed position, and each rotation depth carries its own {@code executes} so the command is
+     * complete after any prefix of {@code yaw pitch roll}.
      */
     private LiteralArgumentBuilder<CommandSourceStack> spawn() {
         return Commands.literal("spawn").requires(this::isAdmin).then(
@@ -154,29 +152,25 @@ public final class BillboardCommand {
             Commands.argument("id", StringArgumentType.word()).then(
             Commands.argument("x", CoordinateArgument.INSTANCE).suggests(coordinateSuggestions(Axis.X)).then(
             Commands.argument("y", CoordinateArgument.INSTANCE).suggests(coordinateSuggestions(Axis.Y)).then(
-            Commands.argument("z", CoordinateArgument.INSTANCE).suggests(coordinateSuggestions(Axis.Z))
-                    .then(spawnTail())
-                    .then(rotationArgument("yaw")
-                            .then(spawnTail())
-                            .then(rotationArgument("pitch")
-                                    .then(spawnTail())
+            Commands.argument("z", CoordinateArgument.INSTANCE).suggests(coordinateSuggestions(Axis.Z)).then(
+            Commands.argument("type", StringArgumentType.word())
+                    .suggests(literals("shared", "per_player")).then(
+            Commands.argument("visibility", StringArgumentType.word())
+                    .suggests(literals("everyone", "none", "whitelist", "blacklist"))
+                    .executes(this::doSpawn)
+                    // The rotation is a trailing option: type and visibility sit before it, so
+                    // their word suggestions appear at a fixed position instead of after a
+                    // variable number of angles.
+                    .then(rotationArgument("yaw").executes(this::doSpawn)
+                            .then(rotationArgument("pitch").executes(this::doSpawn)
                                     .then(rotationArgument("roll")
-                                            .then(spawnTail())))))))));
+                                            .executes(this::doSpawn)))))))))));
     }
 
     /** One rotation argument: degrees, any value — Minecraft angles wrap, so nothing is invalid. */
     private static RequiredArgumentBuilder<CommandSourceStack, Double> rotationArgument(String name) {
         return Commands.argument(name, DoubleArgumentType.doubleArg())
                 .suggests(literals("0", "45", "90", "180", "270"));
-    }
-
-    /** A fresh {@code <type> <visibility>} tail; every optional-rotation branch ends in one. */
-    private RequiredArgumentBuilder<CommandSourceStack, String> spawnTail() {
-        return Commands.argument("type", StringArgumentType.word())
-                .suggests(literals("shared", "per_player")).then(
-            Commands.argument("visibility", StringArgumentType.word())
-                    .suggests(literals("everyone", "none", "whitelist", "blacklist"))
-                    .executes(this::doSpawn));
     }
 
     private int doSpawn(CommandContext<CommandSourceStack> ctx) {
