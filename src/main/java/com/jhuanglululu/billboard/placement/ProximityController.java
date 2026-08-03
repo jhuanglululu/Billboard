@@ -313,6 +313,48 @@ public final class ProximityController<H> {
         });
     }
 
+    /**
+     * Stop and forget every instance of one placement, so the next proximity check starts it again
+     * from scratch. This is how an env change reaches a running guest: environ is immutable for the
+     * lifetime of a run by design, so the only way to show new values is a new run.
+     *
+     * @param key the placement's {@code animation/id} key
+     * @return how many instances were stopped (a {@code per_player} placement can have several)
+     */
+    public int stopInstancesOfPlacement(String key) {
+        int stopped = 0;
+        Running<H> r = shared.remove(key);
+        if (r != null) {
+            lifecycle.stop(r.handle);
+            stopped++;
+        }
+        Map<UUID, Running<H>> byPlayer = perPlayer.remove(key);
+        if (byPlayer != null) {
+            for (Running<H> each : byPlayer.values()) {
+                lifecycle.stop(each.handle);
+                stopped++;
+            }
+        }
+        return stopped;
+    }
+
+    /** {@link #stopInstancesOfPlacement} for every placement of {@code animation}. */
+    public int stopInstancesOfAnimation(String animation) {
+        int stopped = 0;
+        for (String key : List.copyOf(allTrackedKeys())) {
+            if (key.startsWith(animation + "/")) {
+                stopped += stopInstancesOfPlacement(key);
+            }
+        }
+        return stopped;
+    }
+
+    private Set<String> allTrackedKeys() {
+        Set<String> keys = new HashSet<>(shared.keySet());
+        keys.addAll(perPlayer.keySet());
+        return keys;
+    }
+
     /** The number of instances currently tracked as running (for pool sizing). */
     public int activeInstanceCount() {
         int count = shared.size();

@@ -81,4 +81,24 @@ public final class Origin {
     public double worldZ(double relativeX, double relativeY, double relativeZ) {
         return z + rotation.rotatedZ(relativeX, relativeY, relativeZ);
     }
+
+    /**
+     * Origin-relative x of the world point {@code (worldX, worldY, worldZ)} — the exact inverse of
+     * {@link #worldX}, {@code local = Rᵀ · (world − origin)}. This is the direction player
+     * positions travel: world coordinates mean nothing to a guest that only ever spoke in its own
+     * frame.
+     */
+    public double localX(double worldX, double worldY, double worldZ) {
+        return rotation.unrotatedX(worldX - x, worldY - y, worldZ - z);
+    }
+
+    /** Origin-relative y of the world point {@code (worldX, worldY, worldZ)}. */
+    public double localY(double worldX, double worldY, double worldZ) {
+        return rotation.unrotatedY(worldX - x, worldY - y, worldZ - z);
+    }
+
+    /** Origin-relative z of the world point {@code (worldX, worldY, worldZ)}. */
+    public double localZ(double worldX, double worldY, double worldZ) {
+        return rotation.unrotatedZ(worldX - x, worldY - y, worldZ - z);
+    }
 }

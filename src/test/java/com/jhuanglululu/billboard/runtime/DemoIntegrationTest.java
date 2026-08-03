@@ -37,7 +37,7 @@ import org.junit.jupiter.api.Test;
  * 41/46/52             the three text displays
  * </pre>
  *
- * <p>Total scripted duration is 603 ticks, so the run ends on tick 603 with
+ * <p>Total scripted duration is 619 ticks, so the run ends on tick 619 with
  * {@link ExitCode#END}. Because the demo sets {@code random_seed} and never draws from the
  * non-deterministic stream, the whole host-call trace is reproducible — which is what
  * {@link #traceIsIdenticalAcrossRuns()} pins down, and the property that makes this a usable
@@ -45,7 +45,7 @@ import org.junit.jupiter.api.Test;
  */
 class DemoIntegrationTest {
 
-    private static final long EXPECTED_FINISH_TICK = 603;
+    private static final long EXPECTED_FINISH_TICK = 619;
 
     /** Entity ids, from the table above. */
     private static final int STRIP_FIRST = 24;
@@ -104,7 +104,7 @@ class DemoIntegrationTest {
         assertInstanceOf(TickResult.Finished.class, run.result());
         assertEquals(ExitCode.END, ((TickResult.Finished) run.result()).exitCode());
         assertEquals(EXPECTED_FINISH_TICK, run.finishTick(),
-                "the demo's own header tabulates 603 ticks of task-0 sleeps");
+                "the demo's own header tabulates 619 ticks of task-0 sleeps");
     }
 
     /**
@@ -156,12 +156,14 @@ class DemoIntegrationTest {
     void gradientSweepRepaintsEveryStripTile() throws IOException {
         RecordingRenderer r = run().renderer();
 
-        // Section F: 30 frames, every tile re-picking its nearest palette block each frame. The
-        // first tile takes one extra set in section N, which flips it to a lit lamp for punctuation.
+        // Section F: 30 frames, every tile re-picking its nearest palette block each frame.
+        // Section N adds 8 more per tile: two scoped tasks each run 8 steps repainting their
+        // whole half of the strip. The first tile takes one extra set in section O, which
+        // flips it to a lit lamp for punctuation.
         for (int id = STRIP_FIRST; id <= STRIP_LAST; id++) {
             final int tile = id;
             long repaints = r.of("setBlock").stream().filter(e -> e.id() == tile).count();
-            long expected = id == STRIP_FIRST ? SWEEP_FRAMES + 1 : SWEEP_FRAMES;
+            long expected = id == STRIP_FIRST ? SWEEP_FRAMES + 8 + 1 : SWEEP_FRAMES + 8;
             assertEquals(expected, repaints, "tile " + tile + " repaints");
         }
         assertEquals("minecraft:redstone_lamp[lit=true]", r.of("setBlock").stream()

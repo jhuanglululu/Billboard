@@ -2,7 +2,9 @@ package com.jhuanglululu.billboard.data;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -23,7 +25,11 @@ import java.util.Set;
  *                   {@link com.jhuanglululu.billboard.render.Rotation}
  * @param pitch      Minecraft pitch in degrees (positive = down), about the yawed X axis
  * @param roll       roll in degrees about the resulting view axis
- * @param type       per-player or shared
+ * @param env        this placement's own environ layer — free-form strings handed to the guest,
+ *                   overriding the animation-level layer and overridden by the host built-ins (see
+ *                   {@link Env}). The reserved {@code type} key replaced the old
+ *                   {@code InstanceType} field as the source of truth for {@link #type()};
+ *                   insertion-ordered and unmodifiable
  * @param visibility who may see this placement
  * @param paused     whether {@code /billboard pause <id>} disabled this one placement; a paused
  *                   placement instantiates nothing, exactly like the animation-level flag but
@@ -33,10 +39,11 @@ import java.util.Set;
  * @param blacklist  the entries {@code visibility = blacklist} consults
  */
 public record Placement(String animation, String id, String world, double x, double y, double z,
-        double yaw, double pitch, double roll, InstanceType type, VisibilityMode visibility,
+        double yaw, double pitch, double roll, Map<String, String> env, VisibilityMode visibility,
         boolean paused, Set<String> whitelist, Set<String> blacklist) {
 
     public Placement {
+        env = Env.frozen(env);
         whitelist = frozen(whitelist);
         blacklist = frozen(blacklist);
     }
@@ -44,13 +51,15 @@ public record Placement(String animation, String id, String world, double x, dou
     /** A new, unpaused, unrotated placement with empty lists. */
     public Placement(String animation, String id, String world, double x, double y, double z,
             InstanceType type, VisibilityMode visibility) {
-        this(animation, id, world, x, y, z, 0, 0, 0, type, visibility, false, Set.of(), Set.of());
+        this(animation, id, world, x, y, z, 0, 0, 0, envOf(type), visibility, false,
+                Set.of(), Set.of());
     }
 
     /** A new, unpaused placement with a rotation and empty lists — what {@code spawn} builds. */
     public Placement(String animation, String id, String world, double x, double y, double z,
-            double yaw, double pitch, double roll, InstanceType type, VisibilityMode visibility) {
-        this(animation, id, world, x, y, z, yaw, pitch, roll, type, visibility, false,
+            double yaw, double pitch, double roll, Map<String, String> env,
+            VisibilityMode visibility) {
+        this(animation, id, world, x, y, z, yaw, pitch, roll, env, visibility, false,
                 Set.of(), Set.of());
     }
 
@@ -58,7 +67,22 @@ public record Placement(String animation, String id, String world, double x, dou
     public Placement(String animation, String id, String world, double x, double y, double z,
             InstanceType type, VisibilityMode visibility, boolean paused,
             Set<String> whitelist, Set<String> blacklist) {
-        this(animation, id, world, x, y, z, 0, 0, 0, type, visibility, paused, whitelist, blacklist);
+        this(animation, id, world, x, y, z, 0, 0, 0, envOf(type), visibility, paused,
+                whitelist, blacklist);
+    }
+
+    /** The env a caller that only wants to name an instance type is really asking for. */
+    private static Map<String, String> envOf(InstanceType type) {
+        return Map.of(Env.TYPE, type.wire());
+    }
+
+    /**
+     * How this placement instantiates, read out of {@link #env()} — the {@code type} key is the
+     * source of truth since ABI 4, and an absent or unrecognised value reads as
+     * {@link InstanceType#SHARED}.
+     */
+    public InstanceType type() {
+        return Env.typeOf(env);
     }
 
     /** The unique key {@code "animation/id"} for maps. */
@@ -68,31 +92,43 @@ public record Placement(String animation, String id, String world, double x, dou
 
     /** A copy with a different visibility mode. */
     public Placement withVisibility(VisibilityMode newVisibility) {
-        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, type, newVisibility,
+        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, env, newVisibility,
                 paused, whitelist, blacklist);
     }
 
-    /** A copy with a different instance type. */
-    public Placement withType(InstanceType newType) {
-        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, newType, visibility,
+    /** A copy with a different env layer. */
+    public Placement withEnv(Map<String, String> newEnv) {
+        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, newEnv, visibility,
                 paused, whitelist, blacklist);
+    }
+
+    /** A copy with one env key set (appended if new, replaced in place if it already existed). */
+    public Placement withEnvEntry(String key, String value) {
+        Map<String, String> updated = new LinkedHashMap<>(env);
+        updated.put(key, value);
+        return withEnv(updated);
+    }
+
+    /** A copy with a different instance type — the {@code type} env key, written through. */
+    public Placement withType(InstanceType newType) {
+        return withEnvEntry(Env.TYPE, newType.wire());
     }
 
     /** A copy with the per-placement pause flag set or cleared. */
     public Placement withPaused(boolean newPaused) {
-        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, type, visibility,
+        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, env, visibility,
                 newPaused, whitelist, blacklist);
     }
 
     /** A copy with a different whitelist. */
     public Placement withWhitelist(Collection<String> entries) {
-        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, type, visibility,
+        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, env, visibility,
                 paused, frozen(entries), blacklist);
     }
 
     /** A copy with a different blacklist. */
     public Placement withBlacklist(Collection<String> entries) {
-        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, type, visibility,
+        return new Placement(animation, id, world, x, y, z, yaw, pitch, roll, env, visibility,
                 paused, whitelist, frozen(entries));
     }
 

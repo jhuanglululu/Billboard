@@ -19,8 +19,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * End-to-end smoke test on the real {@code rustc} artifact: instantiate with stub host imports
- * (each returns 0, none suspends) and call both handshakes, asserting the ABI 3 pair —
- * {@code _engine_abi() = 1} and {@code _billboard_abi() = 3}. {@code _engine_main} is
+ * (each returns 0, none suspends) and call both handshakes, asserting the ABI 4 pair —
+ * {@code _engine_abi() = 2} and {@code _billboard_abi() = 4}. {@code _engine_main} is
  * deliberately not called here — it needs real host semantics, which
  * {@code billboard.runtime.DemoIntegrationTest} supplies.
  */
@@ -52,14 +52,14 @@ class InterpreterDemoSmokeTest {
     }
 
     @Test
-    void billboardAbiReturnsThree() throws IOException {
+    void billboardAbiReturnsFour() throws IOException {
         assertEquals(AnimationInstance.ABI_VERSION, handshake("_billboard_abi"));
-        assertEquals(3, handshake("_billboard_abi"));
+        assertEquals(4, handshake("_billboard_abi"));
     }
 
     @Test
-    void engineAbiReturnsOne() throws IOException {
+    void engineAbiReturnsTwo() throws IOException {
         assertEquals(MachineInstance.ENGINE_ABI_VERSION, handshake("_engine_abi"));
-        assertEquals(1, handshake("_engine_abi"));
+        assertEquals(2, handshake("_engine_abi"));
     }
 }

@@ -26,7 +26,11 @@ public final class BukkitPositionSource implements PositionSource {
         for (Player p : server.getOnlinePlayers()) {
             Location loc = p.getLocation();
             String world = loc.getWorld() == null ? "" : loc.getWorld().getName();
-            out.add(new ViewerPosition(p.getUniqueId(), p.getName(), world, loc.getX(), loc.getY(), loc.getZ()));
+            // getEyeHeight() is the live value, so a sneaking player reports the lower eyes the
+            // guest would otherwise have to guess at.
+            out.add(new ViewerPosition(p.getUniqueId(), p.getName(), world,
+                    loc.getX(), loc.getY(), loc.getZ(),
+                    loc.getYaw(), loc.getPitch(), p.getEyeHeight()));
         }
         return out;
     }

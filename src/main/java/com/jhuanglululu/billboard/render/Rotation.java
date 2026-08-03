@@ -147,6 +147,30 @@ public final class Rotation {
     }
 
     /**
+     * The x component of {@code Rᵀ · (x, y, z)} — the inverse rotation.
+     *
+     * <p>{@code R} is a rotation matrix, so it is orthogonal and its inverse <em>is</em> its
+     * transpose: no separate matrix, no numerical drift, and the round trip
+     * {@code unrotated(rotated(v)) == v} holds to floating-point accuracy. This is the direction
+     * everything <em>incoming</em> travels — a world position or a world look direction being
+     * expressed in the guest's own frame — while {@link #rotatedX} carries outgoing entity
+     * positions the other way.
+     */
+    public double unrotatedX(double x, double y, double z) {
+        return identity ? x : m00 * x + m10 * y + m20 * z;
+    }
+
+    /** The y component of {@code Rᵀ · (x, y, z)}. */
+    public double unrotatedY(double x, double y, double z) {
+        return identity ? y : m01 * x + m11 * y + m21 * z;
+    }
+
+    /** The z component of {@code Rᵀ · (x, y, z)}. */
+    public double unrotatedZ(double x, double y, double z) {
+        return identity ? z : m02 * x + m12 * y + m22 * z;
+    }
+
+    /**
      * Composes a guest-set display rotation with this one: {@code R_placement · q_guest}, as the
      * quaternion {@code (x, y, z, w)} the display's {@code left_rotation} slot carries.
      *
