@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 
@@ -78,11 +79,16 @@ class DemoIntegrationTest {
     }
 
     private static Run run(long fuelBudget) throws IOException {
+        return run(fuelBudget, Map.of());
+    }
+
+    /** Drives the demo with an environ — what the host would build from the {@code env} layers. */
+    private static Run run(long fuelBudget, Map<String, String> environ) throws IOException {
         RecordingRenderer renderer = new RecordingRenderer();
         List<String> logs = new ArrayList<>();
         AnimationInstance inst = new AnimationInstance("demo", Module.parse(loadDemo()), renderer,
                 blockState -> true, ContentValidator.PERMISSIVE, (name, message) -> logs.add(message),
-                16L << 20, 0L);
+                16L << 20, 0L, environ);
 
         long finishTick = -1;
         TickResult result = null;
@@ -258,6 +264,51 @@ class DemoIntegrationTest {
         assertEquals(List.of("block", "dust", "dustTransition", "named"), variants,
                 "the demo exercises all five imports (block, item and named share the named form)");
         assertTrue(r.count("emitParticle") > 50, "the dust orbit emits many particles");
+    }
+
+    /**
+     * The whole environ chain in one run: this host builds the blob from a {@code Map}, the
+     * engine hands it to the guest through the shared static region, and the SDK's
+     * {@code billboard::env::get} answers with it — observable because section O tints its finale
+     * burst with {@code burst_color}, falling back to the navy it always closed on.
+     *
+     * <p>Section O runs at the very end of the 603-tick script, so this is also the only
+     * assertion that proves environ survives the whole run (it is snapshotted at construction and
+     * read once, in the prologue of task 0, long before the burst).
+     */
+    @Test
+    void environReachesTheGuestAndRetintsTheFinaleBurst() throws IOException {
+        double[] tinted = burstTransition(run(50_000_000, Map.of("burst_color", "#00ff88")));
+        double[] plain = burstTransition(run());
+
+        // #00ff88 as the guest's 0..1 floats — the value crossed three boundaries to get here.
+        assertEquals(0.0, tinted[3], 1e-9);
+        assertEquals(1.0, tinted[4], 1e-9);
+        assertEquals(0x88 / 255.0, tinted[5], 1e-9);
+        // Unset, the demo closes on its own navy.
+        assertEquals(0x2c / 255.0, plain[3], 1e-9);
+        assertEquals(0x2e / 255.0, plain[4], 1e-9);
+        assertEquals(0x8f / 255.0, plain[5], 1e-9);
+        // Only the "to" colour is env-driven: the gold it fades from, and the size, are unmoved.
+        assertEquals(plain[0], tinted[0], 1e-9);
+        assertEquals(plain[1], tinted[1], 1e-9);
+        assertEquals(plain[2], tinted[2], 1e-9);
+        assertEquals(plain[6], tinted[6], 1e-9);
+    }
+
+    /**
+     * The seven numbers of the finale burst: {@code from} rgb, {@code to} rgb, size. The demo
+     * emits exactly one dust-transition particle, so there is nothing to disambiguate.
+     */
+    private static double[] burstTransition(Run run) {
+        List<Event> bursts = run.renderer().of("emitParticle").stream()
+                .filter(e -> e.text().startsWith("dustTransition(")).toList();
+        assertEquals(1, bursts.size(), () -> "one finale burst, got " + bursts.size()
+                + " — did the run reach section O?");
+        String body = bursts.getFirst().text();
+        return java.util.Arrays.stream(
+                        body.substring(body.indexOf('(') + 1, body.length() - 1).split(","))
+                .mapToDouble(Double::parseDouble).toArray();
     }
 
     @Test

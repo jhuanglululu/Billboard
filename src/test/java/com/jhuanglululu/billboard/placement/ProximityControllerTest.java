@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.jhuanglululu.billboard.config.BillboardConfig;
 import com.jhuanglululu.billboard.data.DataStore;
+import com.jhuanglululu.billboard.data.Env;
 import com.jhuanglululu.billboard.data.InstanceType;
 import com.jhuanglululu.billboard.data.Placement;
 import com.jhuanglululu.billboard.data.VisibilityMode;
@@ -12,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -216,6 +218,29 @@ class ProximityControllerTest {
         c.check(0);
         assertEquals(0, life.started);
         assertEquals(0, c.activeInstanceCount());
+    }
+
+    @Test
+    void theInstanceTypeComesFromTheEnvAndTakesEffectOnTheNextStart() {
+        // bb.type on the animation layer applies to every placement of it; changing it mid-flight
+        // stops what is running under the old model, and the next check starts the new one.
+        DataStore data = new DataStore();
+        data.putPlacement(new Placement("demo", "sq", "world", 0, 64, 0,
+                0, 0, 0, Map.of(), VisibilityMode.EVERYONE));
+        data.animation("demo").env().put(Env.TYPE, "per_player");
+        FakePositions pos = new FakePositions();
+        FakeLifecycle life = new FakeLifecycle();
+        ProximityController<String> c = new ProximityController<>(pos, life, data, () -> config(50));
+
+        pos.players.add(viewer(UUID.randomUUID(), "alice", 5));
+        pos.players.add(viewer(UUID.randomUUID(), "bob", -5));
+        c.check(0);
+        assertEquals(2, life.live.size(), "the animation layer's bb.type made it per-player");
+
+        data.animation("demo").env().put(Env.TYPE, "shared");
+        c.check(1);
+        assertEquals(1, life.live.size(), "the two per-player instances gave way to one shared");
+        assertEquals(2, life.stopped);
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.jhuanglululu.billboard.scheduler;
 
+import com.jhuanglululu.billboard.data.Env;
 import com.jhuanglululu.billboard.data.InstanceType;
 import com.jhuanglululu.billboard.data.Placement;
 import com.jhuanglululu.billboard.message.MessageFormats;
@@ -9,6 +10,7 @@ import com.jhuanglululu.billboard.runtime.BlockStateValidator;
 import com.jhuanglululu.billboard.runtime.ContentValidator;
 import com.jhuanglululu.wasm.Module;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
@@ -29,16 +31,23 @@ public final class BukkitInstanceLifecycle implements InstanceLifecycle<RunningI
     private final BlockStateValidator validator;
     private final ContentValidator content;
     private final LongSupplier memoryCapBytes;
+    private final Function<String, Map<String, String>> animationEnv;
 
+    /**
+     * @param animationEnv the animation-level env layer by animation name; merged with the
+     *                     placement's own and the host built-ins at start, and frozen for the run
+     */
     public BukkitInstanceLifecycle(Server server, AnimationScheduler scheduler,
             Function<String, Module> moduleLookup, BlockStateValidator validator,
-            ContentValidator content, LongSupplier memoryCapBytes) {
+            ContentValidator content, LongSupplier memoryCapBytes,
+            Function<String, Map<String, String>> animationEnv) {
         this.server = server;
         this.scheduler = scheduler;
         this.moduleLookup = moduleLookup;
         this.validator = validator;
         this.content = content;
         this.memoryCapBytes = memoryCapBytes;
+        this.animationEnv = animationEnv;
     }
 
     @Override
@@ -47,8 +56,13 @@ public final class BukkitInstanceLifecycle implements InstanceLifecycle<RunningI
         if (module == null) {
             throw new IllegalStateException("no loaded module for animation " + placement.animation());
         }
-        RunningInstance instance = new RunningInstance(placement, ownerLabel(placement, viewers),
-                module, validator, content, memoryCapBytes.getAsLong());
+        Map<String, String> layer = animationEnv.apply(placement.animation());
+        InstanceType type = Env.typeOf(layer, placement);
+        // The environ describes the placement, not the audience: a per-player instance's is
+        // identical to a shared one's. Only the owner label (seed, stats, log routing) differs.
+        RunningInstance instance = new RunningInstance(placement, ownerLabel(type, viewers),
+                module, validator, content, memoryCapBytes.getAsLong(),
+                Env.effective(layer, placement));
         instance.setViewers(resolve(viewers));
         scheduler.add(instance);
         return instance;
@@ -75,8 +89,8 @@ public final class BukkitInstanceLifecycle implements InstanceLifecycle<RunningI
         return out;
     }
 
-    private static String ownerLabel(Placement placement, Set<ViewerPosition> viewers) {
-        if (placement.type() == InstanceType.PER_PLAYER && viewers.size() == 1) {
+    private static String ownerLabel(InstanceType type, Set<ViewerPosition> viewers) {
+        if (type == InstanceType.PER_PLAYER && viewers.size() == 1) {
             return viewers.iterator().next().name();
         }
         return MessageFormats.EVERYONE;

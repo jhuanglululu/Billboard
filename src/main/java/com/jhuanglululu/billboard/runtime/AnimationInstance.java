@@ -85,6 +85,17 @@ public final class AnimationInstance {
     }
 
     /**
+     * An instance with an empty environ — the shape the load-time probe and most tests want, where
+     * the guest has nothing to read anyway.
+     */
+    public AnimationInstance(String name, Module module, Renderer renderer,
+            BlockStateValidator validator, ContentValidator content, LogSink logSink,
+            long memoryCapBytes, long instanceSeed) {
+        this(name, module, renderer, validator, content, logSink, memoryCapBytes, instanceSeed,
+                Map.of());
+    }
+
+    /**
      * @param name           the animation name (for log routing)
      * @param module         the parsed animation module
      * @param renderer       receives visual side effects
@@ -95,10 +106,15 @@ public final class AnimationInstance {
      *                       and by the channel buffers
      * @param instanceSeed   seeds this instance's deterministic random stream; callers derive
      *                       it with {@link #stableSeed} so a placement replays identically
+     * @param environ        the effective env for this run (see
+     *                       {@link com.jhuanglululu.billboard.data.Env}), read by the guest through
+     *                       the engine's {@code environ_len}/{@code environ_read}. The engine
+     *                       snapshots it: it is immutable for the whole run, so an env edit only
+     *                       reaches a guest through a later run
      */
     public AnimationInstance(String name, Module module, Renderer renderer,
             BlockStateValidator validator, ContentValidator content, LogSink logSink,
-            long memoryCapBytes, long instanceSeed) {
+            long memoryCapBytes, long instanceSeed, Map<String, String> environ) {
         this.renderer = renderer;
         this.validator = validator;
         this.content = content;
@@ -111,7 +127,7 @@ public final class AnimationInstance {
                                         MachineInstance.ENGINE_ABI_VERSION),
                                 new MachineInstance.AbiCheck(ABI_EXPORT,
                                         MIN_ABI_VERSION, ABI_VERSION)),
-                        memoryCapBytes, instanceSeed),
+                        memoryCapBytes, instanceSeed, environ),
                 logSink,
                 Map.of(MODULE, buildImports()));
     }

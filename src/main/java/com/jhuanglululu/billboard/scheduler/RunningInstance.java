@@ -15,6 +15,7 @@ import com.jhuanglululu.wasm.Module;
 import com.jhuanglululu.wasmachine.runtime.MachineInstance;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
@@ -34,6 +35,7 @@ public final class RunningInstance implements StatsSource {
     private final BlockStateValidator validator;
     private final ContentValidator content;
     private final long memoryCapBytes;
+    private final Map<String, String> environ;
     private final PacketEventsRenderer renderer;
     private final Queue<String> logBuffer = new ConcurrentLinkedQueue<>();
 
@@ -47,14 +49,20 @@ public final class RunningInstance implements StatsSource {
     // The tick this run began on, stamped by the scheduler; uptime is the difference from now.
     private long startTick;
 
+    /**
+     * @param environ the effective env this run's guest sees; fixed for the whole run — a
+     *                {@code /billboard env} edit reaches only instances started after it
+     */
     public RunningInstance(Placement placement, String ownerLabel, Module module,
-            BlockStateValidator validator, ContentValidator content, long memoryCapBytes) {
+            BlockStateValidator validator, ContentValidator content, long memoryCapBytes,
+            Map<String, String> environ) {
         this.placement = placement;
         this.ownerLabel = ownerLabel;
         this.module = module;
         this.validator = validator;
         this.content = content;
         this.memoryCapBytes = memoryCapBytes;
+        this.environ = Map.copyOf(environ);
         this.renderer = new PacketEventsRenderer(
                 new Origin(placement.world(), placement.x(), placement.y(), placement.z(),
                         new Rotation(placement.yaw(), placement.pitch(), placement.roll())));
@@ -67,7 +75,7 @@ public final class RunningInstance implements StatsSource {
         // per_player billboard shows each player the same variation on every visit.
         long seed = AnimationInstance.stableSeed(placement.animation(), placement.id(), ownerLabel);
         return new AnimationInstance(placement.animation(), module, renderer, validator, content,
-                sink, memoryCapBytes, seed);
+                sink, memoryCapBytes, seed, environ);
     }
 
     /**

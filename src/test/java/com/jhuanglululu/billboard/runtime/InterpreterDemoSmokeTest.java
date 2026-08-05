@@ -58,8 +58,8 @@ class InterpreterDemoSmokeTest {
     }
 
     @Test
-    void engineAbiReturnsOne() throws IOException {
+    void engineAbiReturnsTwo() throws IOException {
         assertEquals(MachineInstance.ENGINE_ABI_VERSION, handshake("_engine_abi"));
-        assertEquals(1, handshake("_engine_abi"));
+        assertEquals(2, handshake("_engine_abi"));
     }
 }

@@ -3,6 +3,7 @@ package com.jhuanglululu.billboard.command;
 import com.jhuanglululu.billboard.config.BillboardConfig;
 import com.jhuanglululu.billboard.data.AnimationSettings;
 import com.jhuanglululu.billboard.data.DataStore;
+import com.jhuanglululu.billboard.data.Env;
 import com.jhuanglululu.billboard.data.InstanceType;
 import com.jhuanglululu.billboard.data.Placement;
 import com.jhuanglululu.billboard.data.VisibilityMode;
@@ -27,6 +28,7 @@ import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import java.util.Collection;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -44,7 +46,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 /**
  * The {@code /billboard} Brigadier command tree (spawn/remove/pause/resume/list/whitelist/
- * blacklist/group/set), following the design's rule that literal subcommands precede fields. Handlers
+ * blacklist/group/set/env), following the design's rule that literal subcommands precede fields. Handlers
  * mutate the {@link DataStore} (persisted via the save callback); the proximity controller
  * reacts on its next check, so commands need no direct instance handles.
  */
@@ -133,18 +135,25 @@ public final class BillboardCommand {
                 .then(listFilter("blacklist"))
                 .then(group())
                 .then(set())
+                .then(env())
                 .then(log())
                 .then(stats())
                 .build();
     }
 
-    // --- spawn <animation> <id> <x y z> <type> <visibility> [yaw] [pitch] [roll] ---
+    // --- spawn <animation> <id> <x y z> <visibility> [yaw] [pitch] [roll] ---
 
     /**
-     * The three rotation arguments trail the command as a nested optional chain: {@code type} and
-     * {@code visibility} sit right after the coordinates, so their word suggestions appear at a
-     * fixed position, and each rotation depth carries its own {@code executes} so the command is
-     * complete after any prefix of {@code yaw pitch roll}.
+     * The three rotation arguments trail the command as a nested optional chain: {@code visibility}
+     * sits right after the coordinates, so its word suggestions appear at a fixed position, and
+     * each rotation depth carries its own {@code executes} so the command is complete after any
+     * prefix of {@code yaw pitch roll}.
+     *
+     * <p><b>{@code type} is gone from the grammar.</b> It is an env key now
+     * ({@link Env#TYPE}), set with {@code /billboard env set <animation>/<id> bb.type per_player}
+     * (or, for every placement of an animation at once, {@code /billboard set <animation> type
+     * …}). A placement that never says otherwise is {@code shared}, which is the common case and
+     * no longer has to be typed.
      */
     private LiteralArgumentBuilder<CommandSourceStack> spawn() {
         return Commands.literal("spawn").requires(this::isAdmin).then(
@@ -153,18 +162,16 @@ public final class BillboardCommand {
             Commands.argument("x", CoordinateArgument.INSTANCE).suggests(coordinateSuggestions(Axis.X)).then(
             Commands.argument("y", CoordinateArgument.INSTANCE).suggests(coordinateSuggestions(Axis.Y)).then(
             Commands.argument("z", CoordinateArgument.INSTANCE).suggests(coordinateSuggestions(Axis.Z)).then(
-            Commands.argument("type", StringArgumentType.word())
-                    .suggests(literals("shared", "per_player")).then(
             Commands.argument("visibility", StringArgumentType.word())
                     .suggests(literals("everyone", "none", "whitelist", "blacklist"))
                     .executes(this::doSpawn)
-                    // The rotation is a trailing option: type and visibility sit before it, so
-                    // their word suggestions appear at a fixed position instead of after a
-                    // variable number of angles.
+                    // The rotation is a trailing option: visibility sits before it, so its word
+                    // suggestions appear at a fixed position instead of after a variable number
+                    // of angles.
                     .then(rotationArgument("yaw").executes(this::doSpawn)
                             .then(rotationArgument("pitch").executes(this::doSpawn)
                                     .then(rotationArgument("roll")
-                                            .executes(this::doSpawn)))))))))));
+                                            .executes(this::doSpawn))))))))));
     }
 
     /** One rotation argument: degrees, any value — Minecraft angles wrap, so nothing is invalid. */
@@ -205,16 +212,6 @@ public final class BillboardCommand {
             reply(ctx, unknown.get());
             return Command.SINGLE_SUCCESS;
         }
-        // Each token is parsed on its own so the rejected word — and only it — can be highlighted;
-        // one shared catch could not tell which of the two the message should name.
-        String typeToken = StringArgumentType.getString(ctx, "type");
-        InstanceType type;
-        try {
-            type = InstanceType.fromWire(typeToken);
-        } catch (IllegalArgumentException e) {
-            reply(ctx, unknownToken("instance type", typeToken));
-            return Command.SINGLE_SUCCESS;
-        }
         String visibilityToken = StringArgumentType.getString(ctx, "visibility");
         VisibilityMode visibility;
         try {
@@ -223,8 +220,10 @@ public final class BillboardCommand {
             reply(ctx, unknownToken("visibility mode", visibilityToken));
             return Command.SINGLE_SUCCESS;
         }
-        data.putPlacement(new Placement(animation, id, world, x, y, z, yaw, pitch, roll, type,
-                visibility));
+        // A fresh placement carries no env at all — not even an explicit bb.type: absent already
+        // means shared, and writing it out would make every new line carry a key nobody chose.
+        data.putPlacement(new Placement(animation, id, world, x, y, z, yaw, pitch, roll,
+                Map.of(), visibility));
         save.run();
         // An unrotated placement reads exactly as it always did; the rotation is appended only
         // when there is one, so the common line does not grow three zeroes.
@@ -579,7 +578,7 @@ public final class BillboardCommand {
         for (Placement p : data.placements()) {
             boolean paused = p.paused()
                     || data.existingAnimation(p.animation()).map(AnimationSettings::paused).orElse(false);
-            String line = "<white>" + esc(p.key()) + "</white> <gray>(" + p.type().wire() + ", "
+            String line = "<white>" + esc(p.key()) + "</white> <gray>(" + typeOf(p).wire() + ", "
                     + p.visibility().wire() + (paused ? ", <red>paused</red>" : "") + ")</gray>";
             String hover = "<white>" + esc(p.world()) + " <gray>at</gray> " + fmt(p.x()) + ", "
                     + fmt(p.y()) + ", " + fmt(p.z()) + "</white>";
@@ -595,7 +594,7 @@ public final class BillboardCommand {
             if (!p.animation().equals(animation)) {
                 continue;
             }
-            String line = "<gray><white>" + esc(p.id()) + "</white> - <white>" + p.type().wire()
+            String line = "<gray><white>" + esc(p.id()) + "</white> - <white>" + typeOf(p).wire()
                     + "</white>, <white>" + p.visibility().wire() + "</white>"
                     + (p.paused() ? ", <red>paused</red>" : "") + "</gray>";
             ctx.getSource().getSender().sendMessage(Messages.withHover(line, placementHover(p)));
@@ -796,6 +795,165 @@ public final class BillboardCommand {
         return Command.SINGLE_SUCCESS;
     }
 
+    // --- env set|unset|list <target> ... ---
+
+    /**
+     * {@code /billboard env set|unset|list <animation|animation/id> …}.
+     *
+     * <p>The verb leads, per the tree's rule, and one {@code target} word names the layer:
+     * {@code demo} is the animation layer, {@code demo/lobby} one placement's. {@link EnvTarget}
+     * tells them apart on the slash — the same qualified spelling every message and handed-out
+     * command in the plugin already uses, and the only unambiguous one (a bare {@code lobby} could
+     * belong to two animations).
+     *
+     * <p>{@code value} is a greedy string, so an env value may contain spaces — these are opaque
+     * strings the host never parses, and a MiniMessage line or a sentence is a perfectly reasonable
+     * thing to hand an animation.
+     */
+    private LiteralArgumentBuilder<CommandSourceStack> env() {
+        return Commands.literal("env").requires(this::isAdmin)
+                .then(Commands.literal("set").then(
+                    Commands.argument("target", StringArgumentType.word()).suggests(envTargetSuggestions()).then(
+                    Commands.argument("key", StringArgumentType.word()).suggests(envKeySuggestions()).then(
+                    Commands.argument("value", StringArgumentType.greedyString())
+                            .executes(this::doEnvSet)))))
+                .then(Commands.literal("unset").then(
+                    Commands.argument("target", StringArgumentType.word()).suggests(envTargetSuggestions()).then(
+                    Commands.argument("key", StringArgumentType.word()).suggests(envKeySuggestions())
+                            .executes(this::doEnvUnset))))
+                .then(Commands.literal("list").then(
+                    Commands.argument("target", StringArgumentType.word()).suggests(envTargetSuggestions())
+                            .executes(this::doEnvList)));
+    }
+
+    private int doEnvSet(CommandContext<CommandSourceStack> ctx) {
+        EnvTarget target = resolveEnvTarget(ctx);
+        if (target == null) {
+            return Command.SINGLE_SUCCESS;
+        }
+        String key = StringArgumentType.getString(ctx, "key");
+        String value = StringArgumentType.getString(ctx, "value");
+        // Both checks run before anything is written, so a rejected key or value changes nothing.
+        Optional<String> badKey = Env.rejectKey(key);
+        if (badKey.isPresent()) {
+            reply(ctx, MessageFormats.PREFIX + "<red>Cannot set <white>" + esc(key) + "</white>: "
+                    + esc(badKey.get()) + "</red>");
+            return Command.SINGLE_SUCCESS;
+        }
+        Optional<String> badValue = Env.rejectValue(key, value);
+        if (badValue.isPresent()) {
+            reply(ctx, unknownToken(badValue.get(), value));
+            return Command.SINGLE_SUCCESS;
+        }
+        if (target.kind() == EnvTarget.Kind.ANIMATION) {
+            data.animation(target.animation()).env().put(key, value);
+        } else {
+            Placement p = data.placement(target.animation(), target.id()).orElseThrow();
+            data.putPlacement(p.withEnvEntry(key, value));
+        }
+        save.run();
+        reply(ctx, MessageFormats.PREFIX + "<green>Set <white>" + esc(key) + "=" + esc(value)
+                + "</white> on <white>" + esc(target.label()) + "</white></green>");
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private int doEnvUnset(CommandContext<CommandSourceStack> ctx) {
+        EnvTarget target = resolveEnvTarget(ctx);
+        if (target == null) {
+            return Command.SINGLE_SUCCESS;
+        }
+        String key = StringArgumentType.getString(ctx, "key");
+        boolean removed;
+        if (target.kind() == EnvTarget.Kind.ANIMATION) {
+            removed = data.animation(target.animation()).env().remove(key) != null;
+        } else {
+            Placement p = data.placement(target.animation(), target.id()).orElseThrow();
+            Map<String, String> updated = new LinkedHashMap<>(p.env());
+            removed = updated.remove(key) != null;
+            data.putPlacement(p.withEnv(updated));
+        }
+        if (!removed) {
+            // Saying so beats a green line claiming a key was removed from a layer that never
+            // had it — the operator is usually one layer away from where they meant to look.
+            reply(ctx, MessageFormats.PREFIX + "<red>No <white>" + esc(key)
+                    + "</white> in the env of <white>" + esc(target.label()) + "</white></red>");
+            return Command.SINGLE_SUCCESS;
+        }
+        save.run();
+        reply(ctx, MessageFormats.PREFIX + "<green>Unset <white>" + esc(key)
+                + "</white> on <white>" + esc(target.label()) + "</white></green>");
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * {@code env list}. On an animation this is just its own layer; on a placement it is the
+     * <em>effective</em> view every instance of it will see, each key tagged with the layer it came
+     * from — which is the only way to answer "why is this value not what I set".
+     */
+    private int doEnvList(CommandContext<CommandSourceStack> ctx) {
+        EnvTarget target = resolveEnvTarget(ctx);
+        if (target == null) {
+            return Command.SINGLE_SUCCESS;
+        }
+        if (target.kind() == EnvTarget.Kind.ANIMATION) {
+            Map<String, String> layer = data.animationEnv(target.animation());
+            reply(ctx, envHeader(target, layer.isEmpty()));
+            layer.forEach((key, value) -> reply(ctx, envLine(key, value, "animation")));
+            return Command.SINGLE_SUCCESS;
+        }
+        Placement p = data.placement(target.animation(), target.id()).orElseThrow();
+        Map<String, String> animationLayer = data.animationEnv(target.animation());
+        // Every built-in is fully determined by the placement, so this preview is exactly what an
+        // instance would get — there is nothing left to fill in when one actually starts.
+        Map<String, String> merged = Env.merge(animationLayer, p.env());
+        merged.putAll(Env.builtins(p, Env.typeOf(merged)));
+        reply(ctx, envHeader(target, merged.isEmpty()));
+        merged.forEach((key, value) -> reply(ctx, envLine(key, value,
+                sourceOf(key, animationLayer, p.env()))));
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /** Which layer a merged key's winning value came from. */
+    private static String sourceOf(String key, Map<String, String> animation,
+            Map<String, String> placement) {
+        if (placement.containsKey(key)) {
+            return "placement";
+        }
+        if (animation.containsKey(key)) {
+            return "animation";
+        }
+        return "built-in";
+    }
+
+    private static String envHeader(EnvTarget target, boolean empty) {
+        return MessageFormats.PREFIX + "<white>" + esc(target.label()) + "</white> <green>env:</green>"
+                + (empty ? " <gray>(none)</gray>" : "");
+    }
+
+    private static String envLine(String key, String value, String source) {
+        return "<white>" + esc(key) + "</white><gray>=</gray><white>" + esc(value)
+                + "</white> <gray>(" + source + ")</gray>";
+    }
+
+    /**
+     * Resolves the {@code target} argument, replying and returning {@code null} when it names
+     * nothing. Shared by the three env verbs.
+     */
+    private EnvTarget resolveEnvTarget(CommandContext<CommandSourceStack> ctx) {
+        String token = StringArgumentType.getString(ctx, "target");
+        EnvTarget target = EnvTarget.resolve(token, knownAnimations(), data.placements());
+        if (target.kind() == EnvTarget.Kind.UNKNOWN) {
+            reply(ctx, noSuchTarget(token));
+            return null;
+        }
+        return target;
+    }
+
+    /** How a placement actually instantiates: {@link Env#TYPE} across both user layers. */
+    private InstanceType typeOf(Placement p) {
+        return Env.typeOf(data.animationEnv(p.animation()), p);
+    }
+
     // --- suggestion providers ---
 
     private SuggestionProvider<CommandSourceStack> animationSuggestions() {
@@ -825,6 +983,42 @@ public final class BillboardCommand {
                 words.add(p.id());
             }
             words.forEach(builder::suggest);
+            return builder.buildFuture();
+        };
+    }
+
+    /**
+     * Both forms an env target may take: every animation name, and every {@code animation/id}
+     * placement key — offered together so the layer being addressed is a choice made from the list
+     * rather than a syntax the user has to know.
+     */
+    private SuggestionProvider<CommandSourceStack> envTargetSuggestions() {
+        return (ctx, builder) -> {
+            Set<String> words = knownAnimations();
+            for (Placement p : data.placements()) {
+                words.add(p.key());
+            }
+            words.forEach(builder::suggest);
+            return builder.buildFuture();
+        };
+    }
+
+    /** The keys already on the addressed layer, plus {@link Env#TYPE} — the one the host acts on. */
+    private SuggestionProvider<CommandSourceStack> envKeySuggestions() {
+        return (ctx, builder) -> {
+            Set<String> keys = new LinkedHashSet<>();
+            keys.add(Env.TYPE);
+            String token = tryGetString(ctx, "target");
+            if (token != null) {
+                EnvTarget target = EnvTarget.resolve(token, knownAnimations(), data.placements());
+                switch (target.kind()) {
+                    case ANIMATION -> keys.addAll(data.animationEnv(target.animation()).keySet());
+                    case PLACEMENT -> data.placement(target.animation(), target.id())
+                            .ifPresent(p -> keys.addAll(p.env().keySet()));
+                    case UNKNOWN -> { }
+                }
+            }
+            keys.forEach(builder::suggest);
             return builder.buildFuture();
         };
     }

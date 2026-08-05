@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -22,18 +23,27 @@ import java.util.TreeMap;
 import java.util.function.Consumer;
 
 /**
- * The plugin-managed persistent state: placements (including their visibility lists),
- * per-animation settings (the paused flag), groups, and per-player log mutes. In-memory and
+ * The plugin-managed persistent state: placements (including their visibility lists and env
+ * layer), per-animation settings (the paused flag and the animation env layer), groups, and
+ * per-player log mutes. In-memory and
  * mutable; the plugin calls {@link #save} after any change. No Bukkit API, so it is fully
  * unit-testable.
  *
  * <p>It lives in a <b>folder</b> ({@code plugins/Billboard/data/}) of three files:
  * <pre>
  * data.json          {"groups": {id: [players]}, "log-muted": [names]}
- * animations.jsonl   one object per line: name, paused
+ * animations.jsonl   one object per line: name, paused, env
  * placements.jsonl   one object per line: animation, id, world, x, y, z, yaw, pitch, roll,
- *                    type, visibility, paused, whitelist, blacklist
+ *                    env, visibility, paused, whitelist, blacklist
  * </pre>
+ *
+ * <p><b>Where the two env layers live.</b> The animation-level layer is an {@code "env"} object on
+ * that animation's line in <b>animations.jsonl</b>, beside its {@code paused} flag — it is
+ * per-animation state, and animations.jsonl is where per-animation state already lived, so no new
+ * file was invented for it. The placement-level layer is an {@code "env"} object on the
+ * placement's line in placements.jsonl, where the {@code "type"} string used to be. Both are
+ * written with their keys sorted, so the files diff cleanly regardless of the order the operator
+ * typed them in.
  *
  * <p><b>Why line-delimited JSON.</b> The two growing collections are records, and one corrupt
  * record must not cost the others: a line that does not parse is skipped with a loud issue (see
@@ -107,6 +117,14 @@ public final class DataStore {
     /** Settings for {@code animation} only if one already exists. */
     public Optional<AnimationSettings> existingAnimation(String animation) {
         return Optional.ofNullable(animations.get(animation));
+    }
+
+    /**
+     * The animation-level {@linkplain Env env} layer for {@code animation} — empty when there is
+     * no settings entry at all. Read-only in spirit: writers go through {@link #animation}.
+     */
+    public Map<String, String> animationEnv(String animation) {
+        return existingAnimation(animation).map(AnimationSettings::env).orElse(Map.of());
     }
 
     /**
@@ -188,6 +206,7 @@ public final class DataStore {
                 JsonObject o = new JsonObject();
                 o.addProperty("name", e.getKey());
                 o.addProperty("paused", e.getValue().paused());
+                o.add("env", envObject(e.getValue().env()));
                 animationLines.add(o);
             }
             writeLines(dir.resolve(ANIMATIONS_JSONL), animationLines);
@@ -204,7 +223,7 @@ public final class DataStore {
                 o.addProperty("yaw", p.yaw());
                 o.addProperty("pitch", p.pitch());
                 o.addProperty("roll", p.roll());
-                o.addProperty("type", p.type().wire());
+                o.add("env", envObject(p.env()));
                 o.addProperty("visibility", p.visibility().wire());
                 o.addProperty("paused", p.paused());
                 o.add("whitelist", stringArray(p.whitelist()));
@@ -224,6 +243,15 @@ public final class DataStore {
                 out.write("\n");
             }
         }
+    }
+
+    /** An env layer as a JSON object with its keys sorted, so the line is byte-stable. */
+    private static JsonObject envObject(Map<String, String> values) {
+        JsonObject object = new JsonObject();
+        for (Map.Entry<String, String> e : Env.sorted(values).entrySet()) {
+            object.addProperty(e.getKey(), e.getValue());
+        }
+        return object;
     }
 
     private static JsonArray stringArray(Collection<String> values) {
@@ -270,7 +298,11 @@ public final class DataStore {
      * old file loads without complaint and is rewritten without them on the next save.
      */
     private void readAnimations(Path file) {
-        forEachRecord(file, record -> animation(string(record, "name")).setPaused(bool(record, "paused")));
+        forEachRecord(file, record -> {
+            AnimationSettings settings = animation(string(record, "name"));
+            settings.setPaused(bool(record, "paused"));
+            settings.env().putAll(envMap(record.get("env")));
+        });
     }
 
     /**
@@ -279,6 +311,12 @@ public final class DataStore {
      * placement (all three zero) and is rewritten with them on the next save — the same
      * no-migration-step treatment the animation-level visibility lists got in
      * {@link #readAnimations}.
+     *
+     * <p>A line written before the instance type moved into the env carries a {@code "type"}
+     * string; it is simply not read — the placement loads as {@code shared} unless its env says
+     * otherwise, and the stale key is gone after the next save. There is deliberately no migration
+     * step: one server runs this format, and it can say {@code /billboard env set … bb.type
+     * per_player} once.
      */
     private void readPlacements(Path file) {
         forEachRecord(file, record -> {
@@ -287,7 +325,7 @@ public final class DataStore {
                     number(record, "x"), number(record, "y"), number(record, "z"),
                     optionalNumber(record, "yaw"), optionalNumber(record, "pitch"),
                     optionalNumber(record, "roll"),
-                    InstanceType.fromWire(string(record, "type")),
+                    envMap(record.get("env")),
                     VisibilityMode.fromWire(string(record, "visibility")),
                     bool(record, "paused"),
                     new LinkedHashSet<>(strings(record.get("whitelist"))),
@@ -364,6 +402,26 @@ public final class DataStore {
             throw new IllegalArgumentException("\"" + key + "\" must be a boolean, got " + v);
         }
         return v.getAsBoolean();
+    }
+
+    /**
+     * An env layer read back out of a record. Absent is empty (older files simply have none); a
+     * present key that is not an object of strings is a broken record, reported like any other.
+     */
+    private static Map<String, String> envMap(JsonElement element) {
+        if (element == null || element.isJsonNull()) {
+            return new LinkedHashMap<>();
+        }
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Map.Entry<String, JsonElement> e : element.getAsJsonObject().entrySet()) {
+            JsonElement v = e.getValue();
+            if (!v.isJsonPrimitive() || !v.getAsJsonPrimitive().isString()) {
+                throw new IllegalArgumentException(
+                        "env value for \"" + e.getKey() + "\" must be a string, got " + v);
+            }
+            out.put(e.getKey(), v.getAsString());
+        }
+        return out;
     }
 
     private static List<String> strings(JsonElement element) {

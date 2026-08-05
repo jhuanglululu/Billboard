@@ -3,6 +3,7 @@ package com.jhuanglululu.billboard.placement;
 import com.jhuanglululu.billboard.config.BillboardConfig;
 import com.jhuanglululu.billboard.data.AnimationSettings;
 import com.jhuanglululu.billboard.data.DataStore;
+import com.jhuanglululu.billboard.data.Env;
 import com.jhuanglululu.billboard.data.InstanceType;
 import com.jhuanglululu.billboard.data.Placement;
 import java.util.ArrayList;
@@ -142,13 +143,37 @@ public final class ProximityController<H> {
                 hinted.remove(p.key()); // resumed: a later pause nudges again
             }
             List<ViewerPosition> eligible = paused ? List.of() : eligibleViewers(p, online, radius);
-            if (p.type() == InstanceType.SHARED) {
+            // The type is read fresh every check, and from both user layers: bb.type is an env
+            // key like any other, so it may sit on the animation as easily as on the placement.
+            // Whatever it says, anything still running under the other model is stopped first —
+            // an env edit takes effect on the next start, and that is this one.
+            if (Env.typeOf(data.animationEnv(p.animation()), p) == InstanceType.SHARED) {
+                stopPerPlayer(p.key());
                 driveShared(p, eligible, paused, currentTick, linger);
             } else {
+                stopShared(p.key());
                 drivePerPlayer(p, eligible, paused, currentTick, linger);
             }
         }
         stopOrphaned(livePlacements);
+    }
+
+    /** Stops and forgets the shared instance of {@code key}, if the placement has one. */
+    private void stopShared(String key) {
+        Running<H> r = shared.remove(key);
+        if (r != null) {
+            lifecycle.stop(r.handle);
+        }
+    }
+
+    /** Stops and forgets every per-player instance of {@code key}. */
+    private void stopPerPlayer(String key) {
+        Map<UUID, Running<H>> byPlayer = perPlayer.remove(key);
+        if (byPlayer != null) {
+            for (Running<H> r : byPlayer.values()) {
+                lifecycle.stop(r.handle);
+            }
+        }
     }
 
     /**

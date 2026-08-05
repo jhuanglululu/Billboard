@@ -175,7 +175,12 @@ class ModuleCheckTest {
         ByteArrayOutputStream code = new ByteArrayOutputStream();
         code.writeBytes(uleb(2));
         code.writeBytes(bytes(0x04, 0x00, 0x41, 0x00, 0x0B));
-        code.writeBytes(bytes(0x04, 0x00, 0x41, 0x01, 0x0B));
+        // Whichever handshake survives reports the version this host wants, so the message names
+        // the one that is missing rather than the one that answered wrong.
+        int version = "_engine_abi".equals(keep)
+                ? MachineInstance.ENGINE_ABI_VERSION
+                : AnimationInstance.ABI_VERSION;
+        code.writeBytes(bytes(0x04, 0x00, 0x41, version, 0x0B));
         m.writeBytes(section(10, code.toByteArray()));
         return m.toByteArray();
     }

@@ -96,7 +96,8 @@ public final class Billboard extends JavaPlugin {
                 () -> config.runtime().instructionBudget(), guestOutput);
 
         BukkitInstanceLifecycle lifecycle = new BukkitInstanceLifecycle(getServer(), scheduler,
-                animations::get, validator, content, () -> config.runtime().memoryCapBytes());
+                animations::get, validator, content, () -> config.runtime().memoryCapBytes(),
+                data::animationEnv);
         controller = new ProximityController<>(new BukkitPositionSource(getServer()), lifecycle, data, () -> config);
         controller.setSkippedPlacements(() -> skippedPlacements);
         controller.setPauseHintSink(this::sendPauseHint);
