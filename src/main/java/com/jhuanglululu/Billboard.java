@@ -2,10 +2,8 @@ package com.jhuanglululu;
 
 import com.github.retrooper.packetevents.PacketEvents;
 import com.jhuanglululu.billboard.command.BillboardCommand;
-import com.jhuanglululu.billboard.command.EnvTarget;
 import com.jhuanglululu.billboard.config.BillboardConfig;
 import com.jhuanglululu.billboard.config.ConfigLoader;
-import com.jhuanglululu.billboard.data.AnimationSettings;
 import com.jhuanglululu.billboard.data.DataStore;
 import com.jhuanglululu.billboard.data.Placement;
 import com.jhuanglululu.billboard.load.AnimationLoader;
@@ -18,7 +16,6 @@ import com.jhuanglululu.billboard.message.GuestOutput;
 import com.jhuanglululu.billboard.message.MessageFormats;
 import com.jhuanglululu.billboard.message.Messages;
 import com.jhuanglululu.billboard.placement.BukkitPositionSource;
-import com.jhuanglululu.billboard.placement.PlayerSnapshots;
 import com.jhuanglululu.billboard.placement.ProximityController;
 import com.jhuanglululu.billboard.placement.ViewerPosition;
 import com.jhuanglululu.billboard.render.PaperBlockStateValidator;
@@ -37,7 +34,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -62,7 +58,6 @@ public final class Billboard extends JavaPlugin {
     private DataStore data;
     private Path dataDir;
     private AnimationScheduler scheduler;
-    private BukkitPositionSource positions;
     private ProximityController<RunningInstance> controller;
     private GuestOutput guestOutput;
     private long lifecycleTick;
@@ -101,12 +96,8 @@ public final class Billboard extends JavaPlugin {
                 () -> config.runtime().instructionBudget(), guestOutput);
 
         BukkitInstanceLifecycle lifecycle = new BukkitInstanceLifecycle(getServer(), scheduler,
-                animations::get, validator, content, () -> config.runtime().memoryCapBytes(),
-                animation -> data.existingAnimation(animation)
-                        .map(AnimationSettings::env).orElse(Map.of()),
-                () -> config.runtime().taskStackBytes());
-        positions = new BukkitPositionSource(getServer());
-        controller = new ProximityController<>(positions, lifecycle, data, () -> config);
+                animations::get, validator, content, () -> config.runtime().memoryCapBytes());
+        controller = new ProximityController<>(new BukkitPositionSource(getServer()), lifecycle, data, () -> config);
         controller.setSkippedPlacements(() -> skippedPlacements);
         controller.setPauseHintSink(this::sendPauseHint);
 
@@ -122,17 +113,9 @@ public final class Billboard extends JavaPlugin {
             controller.check(lifecycleTick);
         }, interval, interval);
 
-        // The player snapshot pass is separate from — and normally far more frequent than — the
-        // proximity pass: proximity decides which instances exist (a slow, cheap question), this
-        // decides what they currently see (a fast one the guest animates against).
-        int playerInterval = Math.max(1, config.snapshots().playerInterval());
-        getServer().getScheduler().runTaskTimer(this, this::pushPlayerSnapshots,
-                playerInterval, playerInterval);
-
         BillboardCommand.register(this, data, this::saveData, animations::keySet, getServer(),
                 () -> config, this::reload, this::exportRegistry,
-                () -> scheduler.pluginStats(data.placements().size()), scheduler,
-                this::restartTarget);
+                () -> scheduler.pluginStats(data.placements().size()), scheduler);
 
         PacketEvents.getAPI().init();
         getLogger().info("Billboard enabled: " + animations.size() + " animation(s), "
@@ -227,34 +210,6 @@ public final class Billboard extends JavaPlugin {
                 + " -" + diff.removed().size()
                 + (errors.isEmpty() ? "" : " (" + errors.size() + " issue(s))"));
         return new ReloadSummary(diff, errors);
-    }
-
-    /**
-     * Hands every running instance the players it is currently allowed to know about (main thread,
-     * every {@code snapshots.player-interval} ticks). The online list is read once for the whole
-     * pass, so every instance's snapshot describes the same instant.
-     */
-    private void pushPlayerSnapshots() {
-        Collection<ViewerPosition> online = positions.onlinePlayers();
-        double radius = config.proximity().radius();
-        for (RunningInstance instance : scheduler.instances()) {
-            instance.setPlayerSnapshot(PlayerSnapshots.forInstance(instance.placement(),
-                    instance.ownerLabel(), online, data.groupsView(), radius));
-        }
-    }
-
-    /**
-     * Stops every running instance of an env/restart target; the proximity pass starts them again
-     * on its next check. Stopping rather than mutating is the whole design: environ is fixed for a
-     * run, so a changed value can only reach a guest through a new run.
-     *
-     * @return how many instances were stopped
-     */
-    private int restartTarget(EnvTarget target) {
-        if (target.kind() == EnvTarget.Kind.PLACEMENT) {
-            return controller.stopInstancesOfPlacement(target.animation() + "/" + target.id());
-        }
-        return controller.stopInstancesOfAnimation(target.animation());
     }
 
     /** {@code /billboard export registry}: writes the SDK's registry.rs, or null on failure. */

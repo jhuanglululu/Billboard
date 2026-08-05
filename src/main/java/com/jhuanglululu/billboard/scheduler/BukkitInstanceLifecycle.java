@@ -1,6 +1,5 @@
 package com.jhuanglululu.billboard.scheduler;
 
-import com.jhuanglululu.billboard.data.Env;
 import com.jhuanglululu.billboard.data.InstanceType;
 import com.jhuanglululu.billboard.data.Placement;
 import com.jhuanglululu.billboard.message.MessageFormats;
@@ -10,10 +9,8 @@ import com.jhuanglululu.billboard.runtime.BlockStateValidator;
 import com.jhuanglululu.billboard.runtime.ContentValidator;
 import com.jhuanglululu.wasm.Module;
 import java.util.HashSet;
-import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
-import java.util.function.IntSupplier;
 import java.util.function.LongSupplier;
 import org.bukkit.Server;
 import org.bukkit.entity.Player;
@@ -32,27 +29,16 @@ public final class BukkitInstanceLifecycle implements InstanceLifecycle<RunningI
     private final BlockStateValidator validator;
     private final ContentValidator content;
     private final LongSupplier memoryCapBytes;
-    private final Function<String, Map<String, String>> animationEnv;
-    private final IntSupplier taskStackBytes;
 
-    /**
-     * @param animationEnv   the animation-level env layer by animation name; merged with the
-     *                       placement's own and the host built-ins at start, and frozen for the
-     *                       run
-     * @param taskStackBytes the configured per-spawned-task stack size
-     */
     public BukkitInstanceLifecycle(Server server, AnimationScheduler scheduler,
             Function<String, Module> moduleLookup, BlockStateValidator validator,
-            ContentValidator content, LongSupplier memoryCapBytes,
-            Function<String, Map<String, String>> animationEnv, IntSupplier taskStackBytes) {
+            ContentValidator content, LongSupplier memoryCapBytes) {
         this.server = server;
         this.scheduler = scheduler;
         this.moduleLookup = moduleLookup;
         this.validator = validator;
         this.content = content;
         this.memoryCapBytes = memoryCapBytes;
-        this.animationEnv = animationEnv;
-        this.taskStackBytes = taskStackBytes;
     }
 
     @Override
@@ -61,15 +47,9 @@ public final class BukkitInstanceLifecycle implements InstanceLifecycle<RunningI
         if (module == null) {
             throw new IllegalStateException("no loaded module for animation " + placement.animation());
         }
-        String owner = ownerLabel(placement, viewers);
-        // bb.player names a real account, so the shared instance's EVERYONE placeholder is not it.
-        String envOwner = placement.type() == InstanceType.PER_PLAYER ? owner : null;
-        RunningInstance instance = new RunningInstance(placement, owner,
-                module, validator, content, memoryCapBytes.getAsLong(),
-                Env.effective(animationEnv.apply(placement.animation()), placement, envOwner),
-                taskStackBytes.getAsInt());
+        RunningInstance instance = new RunningInstance(placement, ownerLabel(placement, viewers),
+                module, validator, content, memoryCapBytes.getAsLong());
         instance.setViewers(resolve(viewers));
-        instance.setPlayerSnapshot(viewers);
         scheduler.add(instance);
         return instance;
     }

@@ -57,25 +57,6 @@ class ModuleCheckTest {
         return out;
     }
 
-    /**
-     * The global section every module here shares: index 0 is the immutable {@code __heap_base}
-     * (1024) the allocator starts from, index 1 the <em>mutable</em> {@code __stack_pointer}
-     * engine ABI 2 requires every guest to export so the host can hand a spawned task its own
-     * stack. A module without it is refused at construction, which is exactly the point — the
-     * error names the build flag rather than surfacing at the first {@code spawn}.
-     */
-    private static final byte[] GLOBALS = bytes(0x02,
-            0x7F, 0x00, 0x41, 0x80, 0x08, 0x0B,     // 0: __heap_base   = 1024, immutable
-            0x7F, 0x01, 0x41, 0x80, 0x08, 0x0B);    // 1: __stack_pointer = 1024, mutable
-
-    /** The export entry for global 1, appended to every module's export section. */
-    private static byte[] stackPointerExport() {
-        ByteArrayOutputStream o = new ByteArrayOutputStream();
-        o.writeBytes(name("__stack_pointer"));
-        o.writeBytes(bytes(0x03, 0x01));
-        return o.toByteArray();
-    }
-
     private static byte[] name(String s) {
         byte[] utf8 = s.getBytes(StandardCharsets.UTF_8);
         ByteArrayOutputStream o = new ByteArrayOutputStream();
@@ -103,9 +84,9 @@ class ModuleCheckTest {
         m.writeBytes(bytes(0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00));
         m.writeBytes(section(1, bytes(0x01, 0x60, 0x00, 0x01, 0x7F)));      // type ()->(i32)
         m.writeBytes(section(3, bytes(0x03, 0x00, 0x00, 0x00)));            // three funcs of type 0
-        m.writeBytes(section(6, GLOBALS));
+        m.writeBytes(section(6, bytes(0x01, 0x7F, 0x00, 0x41, 0x80, 0x08, 0x0B))); // __heap_base=1024
         ByteArrayOutputStream exports = new ByteArrayOutputStream();
-        exports.writeBytes(uleb(5));
+        exports.writeBytes(uleb(4));
         exports.writeBytes(name("_engine_main"));
         exports.writeBytes(bytes(0x00, 0x00));
         exports.writeBytes(name("_billboard_abi"));
@@ -114,7 +95,6 @@ class ModuleCheckTest {
         exports.writeBytes(bytes(0x00, 0x02));
         exports.writeBytes(name("__heap_base"));
         exports.writeBytes(bytes(0x03, 0x00));
-        exports.writeBytes(stackPointerExport());
         m.writeBytes(section(7, exports.toByteArray()));
         ByteArrayOutputStream code = new ByteArrayOutputStream();
         code.writeBytes(uleb(3));
@@ -142,9 +122,9 @@ class ModuleCheckTest {
                 0x60, 0x00, 0x00)));
         // func0 = main, func1 = billboard abi, func2 = engine abi
         m.writeBytes(section(3, bytes(0x03, mainType, 0x00, 0x00)));
-        m.writeBytes(section(6, GLOBALS));
+        m.writeBytes(section(6, bytes(0x01, 0x7F, 0x00, 0x41, 0x80, 0x08, 0x0B)));
         ByteArrayOutputStream exports = new ByteArrayOutputStream();
-        exports.writeBytes(uleb(exportMain ? 5 : 4));
+        exports.writeBytes(uleb(exportMain ? 4 : 3));
         if (exportMain) {
             exports.writeBytes(name("_engine_main"));
             exports.writeBytes(bytes(0x00, 0x00));
@@ -155,7 +135,6 @@ class ModuleCheckTest {
         exports.writeBytes(bytes(0x00, 0x02));
         exports.writeBytes(name("__heap_base"));
         exports.writeBytes(bytes(0x03, 0x00));
-        exports.writeBytes(stackPointerExport());
         m.writeBytes(section(7, exports.toByteArray()));
         ByteArrayOutputStream code = new ByteArrayOutputStream();
         code.writeBytes(uleb(3));
@@ -181,9 +160,9 @@ class ModuleCheckTest {
         m.writeBytes(bytes(0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00));
         m.writeBytes(section(1, bytes(0x01, 0x60, 0x00, 0x01, 0x7F)));
         m.writeBytes(section(3, bytes(0x02, 0x00, 0x00)));
-        m.writeBytes(section(6, GLOBALS));
+        m.writeBytes(section(6, bytes(0x01, 0x7F, 0x00, 0x41, 0x80, 0x08, 0x0B)));
         ByteArrayOutputStream exports = new ByteArrayOutputStream();
-        exports.writeBytes(uleb(keep == null ? 3 : 4));
+        exports.writeBytes(uleb(keep == null ? 2 : 3));
         exports.writeBytes(name("_engine_main"));
         exports.writeBytes(bytes(0x00, 0x00));
         if (keep != null) {
@@ -192,18 +171,11 @@ class ModuleCheckTest {
         }
         exports.writeBytes(name("__heap_base"));
         exports.writeBytes(bytes(0x03, 0x00));
-        exports.writeBytes(stackPointerExport());
         m.writeBytes(section(7, exports.toByteArray()));
         ByteArrayOutputStream code = new ByteArrayOutputStream();
         code.writeBytes(uleb(2));
         code.writeBytes(bytes(0x04, 0x00, 0x41, 0x00, 0x0B));
-        // The surviving handshake answers correctly, so the failure under test is only ever the
-        // missing one — otherwise a wrong version would be reported first and the message would
-        // name the wrong export.
-        int kept = "_engine_abi".equals(keep)
-                ? MachineInstance.ENGINE_ABI_VERSION
-                : AnimationInstance.ABI_VERSION;
-        code.writeBytes(bytes(0x04, 0x00, 0x41, kept, 0x0B));
+        code.writeBytes(bytes(0x04, 0x00, 0x41, 0x01, 0x0B));
         m.writeBytes(section(10, code.toByteArray()));
         return m.toByteArray();
     }
@@ -227,18 +199,17 @@ class ModuleCheckTest {
     @Test
     void theCurrentAbiVersionIsAccepted() {
         ModuleCheck.Result result = ModuleCheck.check(module());
-        assertTrue(result.ok(), () -> "v4 must load: " + result.error().orElse(""));
+        assertTrue(result.ok(), () -> "v3 must load: " + result.error().orElse(""));
         assertNotNull(result.module());
     }
 
     @Test
-    void olderAbiVersionsAreRejectedAtLoadTime() {
-        // ABI 3 moved the engine imports into their own module and ABI 4 rode the engine's own
-        // break to 2 (no more `fork`), so none of the older guests could link even if the
-        // handshake let them through. The break is stated once, here.
-        for (int old : new int[] {1, 2, 3}) {
+    void preSplitAbiVersionsAreRejectedAtLoadTime() {
+        // ABI 3 moved the engine imports into their own module, so a v1/v2 guest could not link
+        // even if the handshake let it through. The break is stated once, here.
+        for (int old : new int[] {1, 2}) {
             ModuleCheck.Result result = ModuleCheck.check(module(old));
-            assertFalse(result.ok(), "v" + old + " must not load after the ABI 4 break");
+            assertFalse(result.ok(), "v" + old + " must not load after the namespace split");
             assertTrue(result.error().orElseThrow().contains("returned " + old),
                     result.error().orElseThrow());
         }
@@ -246,9 +217,9 @@ class ModuleCheckTest {
 
     @Test
     void newerAbiVersionIsRejectedAtLoadTime() {
-        ModuleCheck.Result result = ModuleCheck.check(module(5));
+        ModuleCheck.Result result = ModuleCheck.check(module(4));
         assertFalse(result.ok());
-        assertTrue(result.error().orElseThrow().contains("returned 5"));
+        assertTrue(result.error().orElseThrow().contains("returned 4"));
     }
 
     @Test
@@ -290,9 +261,9 @@ class ModuleCheckTest {
         m.writeBytes(bytes(0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00));
         m.writeBytes(section(1, bytes(0x01, 0x60, 0x00, 0x01, 0x7F)));
         m.writeBytes(section(3, bytes(0x03, 0x00, 0x00, 0x00)));
-        m.writeBytes(section(6, GLOBALS));
+        m.writeBytes(section(6, bytes(0x01, 0x7F, 0x00, 0x41, 0x80, 0x08, 0x0B)));
         ByteArrayOutputStream exports = new ByteArrayOutputStream();
-        exports.writeBytes(uleb(5));
+        exports.writeBytes(uleb(4));
         exports.writeBytes(name("_engine_main"));
         exports.writeBytes(bytes(0x00, 0x00));
         exports.writeBytes(name("_billboard_abi"));
@@ -301,7 +272,6 @@ class ModuleCheckTest {
         exports.writeBytes(bytes(0x00, 0x02));
         exports.writeBytes(name("__heap_base"));
         exports.writeBytes(bytes(0x03, 0x00));
-        exports.writeBytes(stackPointerExport());
         m.writeBytes(section(7, exports.toByteArray()));
         ByteArrayOutputStream code = new ByteArrayOutputStream();
         code.writeBytes(uleb(3));

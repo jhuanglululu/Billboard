@@ -16,15 +16,9 @@ pool-shrink-delay-ticks = 200
 # pauses it. 1M instructions is well under 1 ms on a modern core.
 instruction-budget = 1000000
 
-# Max guest memory per animation instance, in MiB. Every task of an instance
-# shares this one heap (and this one allowance), including the per-task stacks
-# below and any buffered channel bytes.
+# Max guest memory per animation instance, in MiB. Every fork copies the
+# whole memory, so a 3-task animation costs up to 3x this.
 memory-cap-mib = 16
-
-# How large a stack each spawned task gets, carved out of that shared heap.
-# 64 KiB is the wasm linker's own main-stack default. Deeply recursive guest
-# code needs more; hundreds of tiny tasks want less.
-task-stack-bytes = 65536
 
 [proximity]
 # An instance runs only while an eligible player is within this many blocks
@@ -33,19 +27,12 @@ task-stack-bytes = 65536
 radius = 64
 
 # How often (in ticks) to re-check player proximity.
-check-interval = 10
+check-interval = 20
 
 # How long (in ticks) an out-of-range instance lingers before dying, so a
 # player jittering at the border doesn't thrash restarts. The instance keeps
 # running during the window — a returning player sees it continue seamlessly.
 linger-ticks = 100
-
-[snapshots]
-# How often (in ticks) each running instance is handed a fresh list of its
-# players — positions, eye height and facing — for the guest's players() calls.
-# Host functions run on worker threads and can never read live server state, so
-# this interval is exactly how stale that data can be. Every tick by default.
-player-interval = 1
 
 [logging]
 # Players who receive guest log/fail output, e.g. log-viewers = ["name"].

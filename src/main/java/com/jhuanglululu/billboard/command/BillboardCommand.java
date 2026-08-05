@@ -3,7 +3,6 @@ package com.jhuanglululu.billboard.command;
 import com.jhuanglululu.billboard.config.BillboardConfig;
 import com.jhuanglululu.billboard.data.AnimationSettings;
 import com.jhuanglululu.billboard.data.DataStore;
-import com.jhuanglululu.billboard.data.Env;
 import com.jhuanglululu.billboard.data.InstanceType;
 import com.jhuanglululu.billboard.data.Placement;
 import com.jhuanglululu.billboard.data.VisibilityMode;
@@ -28,7 +27,6 @@ import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import java.util.Collection;
 import java.util.EnumMap;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -37,7 +35,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
-import java.util.function.ToIntFunction;
 import java.util.stream.Collectors;
 import net.kyori.adventure.audience.Audience;
 import org.bukkit.Server;
@@ -62,12 +59,11 @@ public final class BillboardCommand {
     private final Supplier<int[]> exportRegistry;
     private final Supplier<PluginStats> pluginStats;
     private final CaptureControl captures;
-    private final ToIntFunction<EnvTarget> restart;
 
     private BillboardCommand(DataStore data, Runnable save, Supplier<Set<String>> animationNames,
             Server server, Supplier<BillboardConfig> config, Supplier<ReloadSummary> reload,
             Supplier<int[]> exportRegistry, Supplier<PluginStats> pluginStats,
-            CaptureControl captures, ToIntFunction<EnvTarget> restart) {
+            CaptureControl captures) {
         this.data = data;
         this.save = save;
         this.animationNames = animationNames;
@@ -77,23 +73,15 @@ public final class BillboardCommand {
         this.exportRegistry = exportRegistry;
         this.pluginStats = pluginStats;
         this.captures = captures;
-        this.restart = restart;
     }
 
-    /**
-     * Register {@code /billboard} on the plugin's command lifecycle.
-     *
-     * @param restart stops every running instance of a resolved target and returns how many it
-     *                stopped; the proximity pass starts them again, which is what makes an env
-     *                change visible to a guest that can only read environ at start-up
-     */
+    /** Register {@code /billboard} on the plugin's command lifecycle. */
     public static void register(JavaPlugin plugin, DataStore data, Runnable save,
             Supplier<Set<String>> animationNames, Server server, Supplier<BillboardConfig> config,
             Supplier<ReloadSummary> reload, Supplier<int[]> exportRegistry,
-            Supplier<PluginStats> pluginStats, CaptureControl captures,
-            ToIntFunction<EnvTarget> restart) {
+            Supplier<PluginStats> pluginStats, CaptureControl captures) {
         BillboardCommand cmd = new BillboardCommand(data, save, animationNames, server, config,
-                reload, exportRegistry, pluginStats, captures, restart);
+                reload, exportRegistry, pluginStats, captures);
         plugin.getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event ->
                 event.registrar().register(cmd.build(), "Billboard animation control", List.of("bb")));
     }
@@ -145,26 +133,18 @@ public final class BillboardCommand {
                 .then(listFilter("blacklist"))
                 .then(group())
                 .then(set())
-                .then(env())
-                .then(restart())
                 .then(log())
                 .then(stats())
                 .build();
     }
 
-    // --- spawn <animation> <id> <x y z> <visibility> [yaw] [pitch] [roll] ---
+    // --- spawn <animation> <id> <x y z> <type> <visibility> [yaw] [pitch] [roll] ---
 
     /**
-     * The three rotation arguments trail the command as a nested optional chain: {@code visibility}
-     * sits right after the coordinates, so its word suggestions appear at a fixed position, and
-     * each rotation depth carries its own {@code executes} so the command is complete after any
-     * prefix of {@code yaw pitch roll}.
-     *
-     * <p><b>{@code type} is gone from the grammar</b> as of ABI 4: it is now an env key like any
-     * other, set with {@code /billboard env <target> set type per_player} (or, for a whole
-     * animation's placements at once, the older {@code /billboard set <animation> type …}). A
-     * placement that never says otherwise is {@code shared}, which is the common case and no longer
-     * has to be typed.
+     * The three rotation arguments trail the command as a nested optional chain: {@code type} and
+     * {@code visibility} sit right after the coordinates, so their word suggestions appear at a
+     * fixed position, and each rotation depth carries its own {@code executes} so the command is
+     * complete after any prefix of {@code yaw pitch roll}.
      */
     private LiteralArgumentBuilder<CommandSourceStack> spawn() {
         return Commands.literal("spawn").requires(this::isAdmin).then(
@@ -173,16 +153,18 @@ public final class BillboardCommand {
             Commands.argument("x", CoordinateArgument.INSTANCE).suggests(coordinateSuggestions(Axis.X)).then(
             Commands.argument("y", CoordinateArgument.INSTANCE).suggests(coordinateSuggestions(Axis.Y)).then(
             Commands.argument("z", CoordinateArgument.INSTANCE).suggests(coordinateSuggestions(Axis.Z)).then(
+            Commands.argument("type", StringArgumentType.word())
+                    .suggests(literals("shared", "per_player")).then(
             Commands.argument("visibility", StringArgumentType.word())
                     .suggests(literals("everyone", "none", "whitelist", "blacklist"))
                     .executes(this::doSpawn)
-                    // The rotation is a trailing option: visibility sits before it, so its word
-                    // suggestions appear at a fixed position instead of after a variable number
-                    // of angles.
+                    // The rotation is a trailing option: type and visibility sit before it, so
+                    // their word suggestions appear at a fixed position instead of after a
+                    // variable number of angles.
                     .then(rotationArgument("yaw").executes(this::doSpawn)
                             .then(rotationArgument("pitch").executes(this::doSpawn)
                                     .then(rotationArgument("roll")
-                                            .executes(this::doSpawn))))))))));
+                                            .executes(this::doSpawn)))))))))));
     }
 
     /** One rotation argument: degrees, any value — Minecraft angles wrap, so nothing is invalid. */
@@ -223,6 +205,16 @@ public final class BillboardCommand {
             reply(ctx, unknown.get());
             return Command.SINGLE_SUCCESS;
         }
+        // Each token is parsed on its own so the rejected word — and only it — can be highlighted;
+        // one shared catch could not tell which of the two the message should name.
+        String typeToken = StringArgumentType.getString(ctx, "type");
+        InstanceType type;
+        try {
+            type = InstanceType.fromWire(typeToken);
+        } catch (IllegalArgumentException e) {
+            reply(ctx, unknownToken("instance type", typeToken));
+            return Command.SINGLE_SUCCESS;
+        }
         String visibilityToken = StringArgumentType.getString(ctx, "visibility");
         VisibilityMode visibility;
         try {
@@ -231,10 +223,8 @@ public final class BillboardCommand {
             reply(ctx, unknownToken("visibility mode", visibilityToken));
             return Command.SINGLE_SUCCESS;
         }
-        // A fresh placement carries no env at all — not even an explicit "type": absent already
-        // means shared, and writing it out would make every new line carry a key nobody chose.
-        data.putPlacement(new Placement(animation, id, world, x, y, z, yaw, pitch, roll,
-                Map.of(), visibility));
+        data.putPlacement(new Placement(animation, id, world, x, y, z, yaw, pitch, roll, type,
+                visibility));
         save.run();
         // An unrotated placement reads exactly as it always did; the rotation is appended only
         // when there is one, so the common line does not grow three zeroes.
@@ -803,197 +793,7 @@ public final class BillboardCommand {
         reply(ctx, MessageFormats.PREFIX + "<green>Set <white>" + esc(field) + "=" + esc(value)
                 + "</white> on <white>" + changed + "</white> placement(s) of <white>"
                 + esc(animation) + "</white></green>");
-        if (type != null) {
-            // type is an env key now, and env is fixed for a run — so the same restart
-            // /billboard env performs is owed here too. (It is also what moves a running
-            // instance between the controller's shared and per-player tracking.)
-            reportRestart(ctx, new EnvTarget(EnvTarget.Kind.ANIMATION, animation, null));
-        }
         return Command.SINGLE_SUCCESS;
-    }
-
-    // --- env <target> set <key> <value> | unset <key> | list ---
-
-    /**
-     * {@code /billboard env <animation|animation/id> set|unset|list …}.
-     *
-     * <p>The target comes before the literal here, against the tree's usual rule, because the two
-     * env layers <em>are</em> the subject: {@code env demo set …} and {@code env demo/lobby set …}
-     * are the same verb on different things, and hoisting {@code set} would force the layer to be
-     * spelled some other way. {@link EnvTarget} is what tells them apart, on the slash.
-     *
-     * <p>{@code value} is a greedy string, so an env value may contain spaces — these are opaque
-     * strings the host never parses, and a MiniMessage line or a sentence is a perfectly reasonable
-     * thing to hand an animation.
-     */
-    private LiteralArgumentBuilder<CommandSourceStack> env() {
-        return Commands.literal("env").requires(this::isAdmin).then(
-            Commands.argument("target", StringArgumentType.word()).suggests(envTargetSuggestions())
-                .then(Commands.literal("set").then(
-                    Commands.argument("key", StringArgumentType.word()).suggests(envKeySuggestions()).then(
-                    Commands.argument("value", StringArgumentType.greedyString())
-                            .executes(this::doEnvSet))))
-                .then(Commands.literal("unset").then(
-                    Commands.argument("key", StringArgumentType.word()).suggests(envKeySuggestions())
-                            .executes(this::doEnvUnset)))
-                .then(Commands.literal("list").executes(this::doEnvList)));
-    }
-
-    private int doEnvSet(CommandContext<CommandSourceStack> ctx) {
-        EnvTarget target = resolveEnvTarget(ctx);
-        if (target == null) {
-            return Command.SINGLE_SUCCESS;
-        }
-        String key = StringArgumentType.getString(ctx, "key");
-        String value = StringArgumentType.getString(ctx, "value");
-        // Both checks run before anything is written, so a rejected key or value changes nothing
-        // at all and restarts nothing.
-        Optional<String> badKey = Env.rejectKey(key);
-        if (badKey.isPresent()) {
-            reply(ctx, MessageFormats.PREFIX + "<red>Cannot set <white>" + esc(key) + "</white>: "
-                    + esc(badKey.get()) + "</red>");
-            return Command.SINGLE_SUCCESS;
-        }
-        Optional<String> badValue = Env.rejectValue(key, value);
-        if (badValue.isPresent()) {
-            reply(ctx, unknownToken(badValue.get(), value));
-            return Command.SINGLE_SUCCESS;
-        }
-        if (target.kind() == EnvTarget.Kind.ANIMATION) {
-            data.animation(target.animation()).env().put(key, value);
-        } else {
-            Placement p = data.placement(target.animation(), target.id()).orElseThrow();
-            data.putPlacement(p.withEnvEntry(key, value));
-        }
-        save.run();
-        reply(ctx, MessageFormats.PREFIX + "<green>Set <white>" + esc(key) + "=" + esc(value)
-                + "</white> on <white>" + esc(target.label()) + "</white></green>");
-        reportRestart(ctx, target);
-        return Command.SINGLE_SUCCESS;
-    }
-
-    private int doEnvUnset(CommandContext<CommandSourceStack> ctx) {
-        EnvTarget target = resolveEnvTarget(ctx);
-        if (target == null) {
-            return Command.SINGLE_SUCCESS;
-        }
-        String key = StringArgumentType.getString(ctx, "key");
-        boolean removed;
-        if (target.kind() == EnvTarget.Kind.ANIMATION) {
-            removed = data.animation(target.animation()).env().remove(key) != null;
-        } else {
-            Placement p = data.placement(target.animation(), target.id()).orElseThrow();
-            Map<String, String> updated = new LinkedHashMap<>(p.env());
-            removed = updated.remove(key) != null;
-            data.putPlacement(p.withEnv(updated));
-        }
-        if (!removed) {
-            // Nothing changed, so nothing is restarted — and saying so beats a green line that
-            // claims a key was removed from a layer that never had it.
-            reply(ctx, MessageFormats.PREFIX + "<red>No <white>" + esc(key)
-                    + "</white> in the env of <white>" + esc(target.label()) + "</white></red>");
-            return Command.SINGLE_SUCCESS;
-        }
-        save.run();
-        reply(ctx, MessageFormats.PREFIX + "<green>Unset <white>" + esc(key)
-                + "</white> on <white>" + esc(target.label()) + "</white></green>");
-        reportRestart(ctx, target);
-        return Command.SINGLE_SUCCESS;
-    }
-
-    /**
-     * {@code env list}. On an animation this is just its own layer; on a placement it is the
-     * <em>merged</em> view every instance of it will actually see, each key tagged with the layer
-     * it came from — which is the only way to answer "why is this value not what I set".
-     */
-    private int doEnvList(CommandContext<CommandSourceStack> ctx) {
-        EnvTarget target = resolveEnvTarget(ctx);
-        if (target == null) {
-            return Command.SINGLE_SUCCESS;
-        }
-        if (target.kind() == EnvTarget.Kind.ANIMATION) {
-            Map<String, String> layer = data.existingAnimation(target.animation())
-                    .map(AnimationSettings::env).orElse(Map.of());
-            reply(ctx, envHeader(target, layer.isEmpty()));
-            layer.forEach((key, value) -> reply(ctx, envLine(key, value, "animation")));
-            return Command.SINGLE_SUCCESS;
-        }
-        Placement p = data.placement(target.animation(), target.id()).orElseThrow();
-        Map<String, String> animationLayer = data.existingAnimation(target.animation())
-                .map(AnimationSettings::env).orElse(Map.of());
-        // The owner is unknown until an instance actually starts, so bb.player is described
-        // rather than invented; every other built-in is fully determined by the placement.
-        Map<String, String> merged = Env.merge(animationLayer, p.env());
-        merged.putAll(Env.builtins(p, null));
-        reply(ctx, envHeader(target, merged.isEmpty()));
-        merged.forEach((key, value) -> reply(ctx, envLine(key, value,
-                sourceOf(key, animationLayer, p.env()))));
-        if (p.type() == InstanceType.PER_PLAYER) {
-            reply(ctx, "<gray>" + esc(Env.PREFIX + "player") + " is added per instance (the owner)</gray>");
-        }
-        return Command.SINGLE_SUCCESS;
-    }
-
-    /** Which layer a merged key's winning value came from. */
-    private static String sourceOf(String key, Map<String, String> animation,
-            Map<String, String> placement) {
-        if (key.startsWith(Env.PREFIX)) {
-            return "built-in";
-        }
-        if (placement.containsKey(key)) {
-            return "placement";
-        }
-        return animation.containsKey(key) ? "animation" : "built-in";
-    }
-
-    private static String envHeader(EnvTarget target, boolean empty) {
-        return MessageFormats.PREFIX + "<white>" + esc(target.label()) + "</white> <green>env:</green>"
-                + (empty ? " <gray>(none)</gray>" : "");
-    }
-
-    private static String envLine(String key, String value, String source) {
-        return "<white>" + esc(key) + "</white><gray>=</gray><white>" + esc(value)
-                + "</white> <gray>(" + source + ")</gray>";
-    }
-
-    /**
-     * Resolves the {@code target} argument, replying and returning {@code null} when it names
-     * nothing. Shared by the three env verbs and by {@code restart}.
-     */
-    private EnvTarget resolveEnvTarget(CommandContext<CommandSourceStack> ctx) {
-        String token = StringArgumentType.getString(ctx, "target");
-        EnvTarget target = EnvTarget.resolve(token, knownAnimations(), data.placements());
-        if (target.kind() == EnvTarget.Kind.UNKNOWN) {
-            reply(ctx, noSuchTarget(token));
-            return null;
-        }
-        return target;
-    }
-
-    /** Restarts the target's instances and says how many, so a silent no-op is never a mystery. */
-    private void reportRestart(CommandContext<CommandSourceStack> ctx, EnvTarget target) {
-        int stopped = restart.applyAsInt(target);
-        reply(ctx, MessageFormats.PREFIX + "<green>Restarted <white>" + stopped
-                + "</white> instance(s) of <white>" + esc(target.label()) + "</white></green>");
-    }
-
-    // --- restart <animation | animation/id> ---
-
-    /**
-     * {@code /billboard restart <target>} — the same stop-and-let-proximity-restart an env change
-     * performs, without an env change. Useful on its own: it is the only way to make a running
-     * instance start over from its first tick without editing something.
-     */
-    private LiteralArgumentBuilder<CommandSourceStack> restart() {
-        return Commands.literal("restart").requires(this::isAdmin).then(
-            Commands.argument("target", StringArgumentType.word()).suggests(envTargetSuggestions())
-                    .executes(ctx -> {
-                        EnvTarget target = resolveEnvTarget(ctx);
-                        if (target != null) {
-                            reportRestart(ctx, target);
-                        }
-                        return Command.SINGLE_SUCCESS;
-                    }));
     }
 
     // --- suggestion providers ---
@@ -1025,43 +825,6 @@ public final class BillboardCommand {
                 words.add(p.id());
             }
             words.forEach(builder::suggest);
-            return builder.buildFuture();
-        };
-    }
-
-    /**
-     * Both forms an env/restart target may take: every animation name, and every
-     * {@code animation/id} placement key — offered together so the layer being addressed is a
-     * choice the user makes from the list rather than a syntax they have to know.
-     */
-    private SuggestionProvider<CommandSourceStack> envTargetSuggestions() {
-        return (ctx, builder) -> {
-            Set<String> words = knownAnimations();
-            for (Placement p : data.placements()) {
-                words.add(p.key());
-            }
-            words.forEach(builder::suggest);
-            return builder.buildFuture();
-        };
-    }
-
-    /** The keys already on the addressed layer, plus {@code type} — the one the host acts on. */
-    private SuggestionProvider<CommandSourceStack> envKeySuggestions() {
-        return (ctx, builder) -> {
-            Set<String> keys = new LinkedHashSet<>();
-            keys.add(Env.TYPE);
-            String token = tryGetString(ctx, "target");
-            if (token != null) {
-                EnvTarget target = EnvTarget.resolve(token, knownAnimations(), data.placements());
-                switch (target.kind()) {
-                    case ANIMATION -> data.existingAnimation(target.animation())
-                            .ifPresent(s -> keys.addAll(s.env().keySet()));
-                    case PLACEMENT -> data.placement(target.animation(), target.id())
-                            .ifPresent(p -> keys.addAll(p.env().keySet()));
-                    case UNKNOWN -> { }
-                }
-            }
-            keys.forEach(builder::suggest);
             return builder.buildFuture();
         };
     }

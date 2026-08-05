@@ -9,10 +9,9 @@ import com.jhuanglululu.wasmachine.runtime.SyncWasm.P;
 import org.junit.jupiter.api.Test;
 
 /**
- * The ABI 4 handshake pair. The namespace split (3) and the shared-memory/environ/player break (4)
- * were each one coordinated change, so there is no backwards compatibility left to keep: exactly
- * one Billboard version is accepted, and the engine's own version is checked beside it — both at
- * load time.
+ * The ABI 3 handshake pair. The namespace split was one coordinated break, so there is no
+ * backwards compatibility left to keep: exactly one Billboard version is accepted, and the
+ * engine's own version is checked beside it — both at load time.
  */
 class AbiVersionTest {
 
@@ -29,15 +28,14 @@ class AbiVersionTest {
     @Test
     void theCurrentVersionIsAccepted() {
         assertInstanceOf(TickResult.Finished.class, firstTick(AnimationInstance.ABI_VERSION));
-        assertInstanceOf(TickResult.Finished.class, firstTick(4));
+        assertInstanceOf(TickResult.Finished.class, firstTick(3));
     }
 
     @Test
-    void olderVersionsAreRejected() {
+    void preSplitVersionsAreRejected() {
         // A v1/v2 guest expects fork/sleep/realloc inside the "billboard" module, where this host
-        // no longer provides them; a v3 guest asks the engine for `fork`, which engine ABI 2
-        // deleted. None of the three could link even if the handshake waved them through.
-        for (int old : new int[] {1, 2, 3}) {
+        // no longer provides them: it could not link even if the handshake waved it through.
+        for (int old : new int[] {1, 2}) {
             TickResult result = firstTick(old);
             assertInstanceOf(TickResult.Errored.class, result);
             assertTrue(((TickResult.Errored) result).message().contains("returned " + old),
@@ -47,11 +45,11 @@ class AbiVersionTest {
 
     @Test
     void newerVersionIsRejected() {
-        TickResult result = firstTick(5);
+        TickResult result = firstTick(4);
         assertInstanceOf(TickResult.Errored.class, result);
         String message = ((TickResult.Errored) result).message();
-        assertTrue(message.contains("_billboard_abi") && message.contains("returned 5")
-                        && message.contains("4..4"),
+        assertTrue(message.contains("_billboard_abi") && message.contains("returned 4")
+                        && message.contains("3..3"),
                 "expected the handshake message to name the export and versions but was: " + message);
     }
 

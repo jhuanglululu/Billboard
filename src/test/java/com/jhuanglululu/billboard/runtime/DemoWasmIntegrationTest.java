@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Integration test against a real {@code rustc}-emitted artifact: the Billboard demo animation
- * compiled for {@code wasm32-unknown-unknown}. Asserts the ABI 4 import surface — which module
+ * compiled for {@code wasm32-unknown-unknown}. Asserts the ABI 3 import surface — which module
  * each host function is asked of, the boundary the namespace split exists to make structural —
  * and the export <em>names</em>; export signatures are deliberately not asserted here, since
  * the runtime's own handshake covers those.
@@ -67,9 +67,7 @@ class DemoWasmIntegrationTest {
 
         for (String name : new String[] {
                 // tasks and memory
-                "realloc", "spawn", "join", "exit", "sleep", "log", "fail",
-                // environ
-                "environ_len", "environ_read",
+                "realloc", "fork", "join", "exit", "sleep", "log", "fail",
                 // sync
                 "signal_new", "signal_notify", "barrier_new", "wait_all", "wait_any", "wait",
                 "channel_new", "channel_send", "channel_recv_len", "channel_recv",
@@ -102,16 +100,13 @@ class DemoWasmIntegrationTest {
                 "set_line_width", "set_text_flags", "set_pose", "get_pose", "set_equipment",
                 "set_stand_flags", "set_yaw", "get_yaw", "play_sound", "emit_particle",
                 "emit_particle_dust", "emit_particle_dust_transition", "emit_particle_block",
-                "emit_particle_item",
-                // players (ABI 4) — the demo queries but never calls Player::update,
-                // and rustc only imports what is referenced, so player_update is absent here
-                "players_len", "players_read"}) {
+                "emit_particle_item"}) {
             assertTrue(billboard.contains(name),
                     "plugin import \"" + name + "\" missing; billboard module was " + billboard);
         }
         // And nothing engine-owned leaked in here — the failure this test exists for.
         for (String engineOwned : new String[] {
-                "spawn", "sleep", "exit", "realloc", "log", "fail", "wait", "channel_new",
+                "fork", "sleep", "exit", "realloc", "log", "fail", "wait", "channel_new",
                 "random_det", "pow"}) {
             assertFalse(billboard.contains(engineOwned),
                     "engine function \"" + engineOwned + "\" must not be in the plugin module");
@@ -119,7 +114,7 @@ class DemoWasmIntegrationTest {
     }
 
     @Test
-    void exportsAreTheAbiFourSet() throws IOException {
+    void exportsAreTheAbiThreeSet() throws IOException {
         Module m = Module.parse(loadDemo());
 
         Set<String> names = new TreeSet<>();
@@ -127,9 +122,9 @@ class DemoWasmIntegrationTest {
             names.add(e.name());
         }
 
-        // Both handshakes, the engine-named entry, the allocator bounds, and — new at engine
-        // ABI 2 — the mutable stack-pointer global the host aims each spawned task's stack with.
+        // Both handshakes, the engine-named entry, and the allocator bounds. _billboard_main is
+        // gone: the entry point is the engine's since ABI 3.
         assertEquals(Set.of("memory", "_engine_main", "_engine_abi", "_billboard_abi",
-                "__heap_base", "__data_end", "__stack_pointer"), names);
+                "__heap_base", "__data_end"), names);
     }
 }

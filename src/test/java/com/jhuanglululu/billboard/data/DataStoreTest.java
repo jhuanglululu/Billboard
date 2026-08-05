@@ -7,10 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -164,85 +162,11 @@ class DataStoreTest {
     }
 
     @Test
-    void legacyTypeFieldsMigrateIntoTheEnvLayer(@TempDir Path dir) throws IOException {
-        // Files written before ABI 4 carry a "type" string and no "env" object at all. They must
-        // load as env = {type: …} — same instance type, no operator action — and be rewritten in
-        // the new shape on the next save.
-        Path data = dir.resolve("data");
-        Files.createDirectories(data);
-        Files.writeString(data.resolve("placements.jsonl"), """
-                {"animation":"demo","id":"a","world":"world","x":1.0,"y":2.0,"z":3.0,"type":"shared","visibility":"everyone","paused":false}
-                {"animation":"demo","id":"b","world":"world","x":0.0,"y":0.0,"z":0.0,"type":"per_player","visibility":"everyone","paused":false}
-                """);
-
-        DataStore store = DataStore.load(data);
-        assertTrue(store.issues().isEmpty(), () -> "issues: " + store.issues());
-
-        assertEquals(Map.of("type", "shared"), store.placement("demo", "a").orElseThrow().env());
-        assertEquals(Map.of("type", "per_player"), store.placement("demo", "b").orElseThrow().env());
-        assertEquals(InstanceType.SHARED, store.placement("demo", "a").orElseThrow().type());
-        assertEquals(InstanceType.PER_PLAYER, store.placement("demo", "b").orElseThrow().type());
-
-        store.save(data);
-        String rewritten = Files.readString(data.resolve("placements.jsonl"));
-        assertTrue(rewritten.contains("\"env\":{\"type\":\"per_player\"}"), rewritten);
-        assertFalse(rewritten.contains("\"type\":\"shared\",\"visibility\""),
-                "the bare type field must be gone after a save: " + rewritten);
-    }
-
-    @Test
-    void bothEnvLayersRoundTripAndArePersistedWithSortedKeys(@TempDir Path dir) throws IOException {
-        Path data = dir.resolve("data");
-        DataStore out = new DataStore();
-        // Deliberately inserted out of order, so "sorted on write" is actually being tested.
-        Map<String, String> placementEnv = new LinkedHashMap<>();
-        placementEnv.put("zoom", "2");
-        placementEnv.put("type", "per_player");
-        placementEnv.put("caption", "hello there");
-        out.putPlacement(new Placement("demo", "lobby", "world", 0, 64, 0,
-                0, 0, 0, placementEnv, VisibilityMode.EVERYONE));
-        out.animation("demo").env().put("theme", "winter");
-        out.animation("demo").env().put("beat", "120");
-        out.save(data);
-
-        String placements = Files.readString(data.resolve("placements.jsonl"));
-        assertTrue(placements.contains(
-                "\"env\":{\"caption\":\"hello there\",\"type\":\"per_player\",\"zoom\":\"2\"}"),
-                placements);
-        String animations = Files.readString(data.resolve("animations.jsonl"));
-        assertTrue(animations.contains("\"env\":{\"beat\":\"120\",\"theme\":\"winter\"}"), animations);
-
-        DataStore in = DataStore.load(data);
-        assertTrue(in.issues().isEmpty(), () -> "issues: " + in.issues());
-        assertEquals(Map.of("zoom", "2", "type", "per_player", "caption", "hello there"),
-                in.placement("demo", "lobby").orElseThrow().env());
-        assertEquals(Map.of("theme", "winter", "beat", "120"), in.animation("demo").env());
-        assertEquals(InstanceType.PER_PLAYER, in.placement("demo", "lobby").orElseThrow().type());
-    }
-
-    @Test
-    void anEnvValueThatIsNotAStringTakesOnlyItsOwnLineDown(@TempDir Path dir) throws IOException {
-        Path data = dir.resolve("data");
-        Files.createDirectories(data);
-        Files.writeString(data.resolve("placements.jsonl"), """
-                {"animation":"demo","id":"a","world":"world","x":0.0,"y":0.0,"z":0.0,"env":{"beat":120},"visibility":"everyone","paused":false}
-                {"animation":"demo","id":"b","world":"world","x":0.0,"y":0.0,"z":0.0,"env":{"beat":"120"},"visibility":"everyone","paused":false}
-                """);
-
-        DataStore store = DataStore.load(data);
-
-        assertEquals(List.of("demo/b"), store.placements().stream().map(Placement::key).toList());
-        assertEquals(1, store.issues().size(), () -> "issues: " + store.issues());
-        assertTrue(store.issues().getFirst().contains("placements.jsonl line 1"),
-                store.issues().getFirst());
-    }
-
-    @Test
     void rotationRoundTrips(@TempDir Path dir) {
         Path data = dir.resolve("data");
         DataStore out = new DataStore();
         out.putPlacement(new Placement("demo", "turned", "world", 10.5, 64.0, -20.0,
-                90.0, -22.5, 180.0, Map.of(Env.TYPE, "shared"), VisibilityMode.EVERYONE));
+                90.0, -22.5, 180.0, InstanceType.SHARED, VisibilityMode.EVERYONE));
         out.putPlacement(new Placement("demo", "straight", "world", 0, 64, 0,
                 InstanceType.SHARED, VisibilityMode.EVERYONE));
         out.save(data);

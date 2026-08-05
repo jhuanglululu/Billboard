@@ -99,15 +99,6 @@ public final class AnimationScheduler implements CaptureControl {
         return instances.size();
     }
 
-    /**
-     * Every instance the scheduler is holding, for the main-thread passes that have to reach all of
-     * them — today the player-snapshot pass. The set is concurrent, so iterating it is safe while
-     * workers finish ticks and hand results back.
-     */
-    public Iterable<RunningInstance> instances() {
-        return instances;
-    }
-
     // --- stats ---
 
     /**

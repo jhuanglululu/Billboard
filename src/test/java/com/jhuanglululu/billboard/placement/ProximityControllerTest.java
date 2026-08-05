@@ -56,7 +56,6 @@ class ProximityControllerTest {
         return new BillboardConfig(
                 BillboardConfig.defaults().runtime(),
                 new BillboardConfig.Proximity(64, 20, linger),
-                BillboardConfig.defaults().snapshots(),
                 List.of(),
                 true);
     }

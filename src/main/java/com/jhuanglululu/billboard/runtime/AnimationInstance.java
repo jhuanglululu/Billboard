@@ -11,7 +11,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Supplier;
 
 /**
  * One running animation: Billboard's layer over a {@link MachineInstance}. The engine owns the
@@ -34,16 +33,15 @@ public final class AnimationInstance {
 
     /**
      * The Billboard ABI version this host speaks: what {@code _billboard_abi} must return.
-     * ABI 3 split the import namespaces and ABI 4 added the player imports below; neither is a
-     * version a newer guest can fall back to, because the same coordinated break also moved the
-     * engine to its own ABI 2 (shared memory, {@code spawn} in place of {@code fork},
-     * {@code environ}), which an older guest cannot link against either. There is therefore
-     * nothing to be compatible with: min and max are both 4.
+     * ABI 3 split the import namespaces, which is a hard break rather than an additive one —
+     * a v1/v2 guest asks for {@code fork}, {@code sleep} and friends inside the
+     * {@value #MODULE} module, where this host no longer provides them, so it cannot even
+     * link. There is therefore nothing to be compatible with: min and max are both 3.
      */
-    public static final int ABI_VERSION = 4;
+    public static final int ABI_VERSION = 3;
 
     /** The oldest ABI version still accepted — the same one, for the reason above. */
-    public static final int MIN_ABI_VERSION = 4;
+    public static final int MIN_ABI_VERSION = 3;
 
     /** The plugin's own import module: entities, sound, particles. */
     private static final String MODULE = "billboard";
@@ -63,18 +61,16 @@ public final class AnimationInstance {
     private final Renderer renderer;
     private final BlockStateValidator validator;
     private final ContentValidator content;
-    private final Supplier<List<PlayerView>> players;
 
     private final EntityRegistry registry = new EntityRegistry();
     private final MachineInstance machine;
 
-    // The two-call get_block / get_item / get_text / players protocols cache the bytes between the
-    // paired calls. One field per protocol is enough: there is no blocking point between the two
-    // calls, so no other task can run in between and clobber it.
+    // The two-call get_block / get_item / get_text protocols cache the bytes between the paired
+    // calls. One field per protocol is enough: there is no blocking point between the two calls,
+    // so no other task can run in between and clobber it.
     private byte[] pendingBlock;
     private byte[] pendingItem;
     private byte[] pendingText;
-    private byte[] pendingPlayers;
 
     /**
      * Convenience constructor for callers with no placement context (tests, tooling): the
@@ -89,45 +85,23 @@ public final class AnimationInstance {
     }
 
     /**
-     * An instance with no environ, default task stacks and no players — the shape the load-time
-     * probe and most tests want, where none of the three can matter.
+     * @param name           the animation name (for log routing)
+     * @param module         the parsed animation module
+     * @param renderer       receives visual side effects
+     * @param validator      validates block-state strings
+     * @param content        validates item strings and MiniMessage text
+     * @param logSink        receives guest {@code log} output
+     * @param memoryCapBytes the per-instance memory cap: one allowance shared by every task's heap
+     *                       and by the channel buffers
+     * @param instanceSeed   seeds this instance's deterministic random stream; callers derive
+     *                       it with {@link #stableSeed} so a placement replays identically
      */
     public AnimationInstance(String name, Module module, Renderer renderer,
             BlockStateValidator validator, ContentValidator content, LogSink logSink,
             long memoryCapBytes, long instanceSeed) {
-        this(name, module, renderer, validator, content, logSink, memoryCapBytes, instanceSeed,
-                Map.of(), MachineInstance.Config.DEFAULT_TASK_STACK_BYTES, List::of);
-    }
-
-    /**
-     * @param name            the animation name (for log routing)
-     * @param module          the parsed animation module
-     * @param renderer        receives visual side effects
-     * @param validator       validates block-state strings
-     * @param content         validates item strings and MiniMessage text
-     * @param logSink         receives guest {@code log} output
-     * @param memoryCapBytes  the per-instance memory cap: one allowance shared by every task's heap
-     *                        and by the channel buffers
-     * @param instanceSeed    seeds this instance's deterministic random stream; callers derive
-     *                        it with {@link #stableSeed} so a placement replays identically
-     * @param environ         the effective env for this run (see
-     *                        {@link com.jhuanglululu.billboard.data.Env}), read by the guest
-     *                        through the engine's {@code environ_len}/{@code environ_read}.
-     *                        Immutable for the whole run — an env change restarts the instance
-     * @param taskStackBytes  how large a stack the engine gives each spawned task
-     * @param players         the latest player snapshot for this instance, in the placement's own
-     *                        frame. It is a supplier rather than a list because the main thread
-     *                        swaps a fresh one in while this instance ticks on a worker; the host
-     *                        functions below read it exactly once per call
-     */
-    public AnimationInstance(String name, Module module, Renderer renderer,
-            BlockStateValidator validator, ContentValidator content, LogSink logSink,
-            long memoryCapBytes, long instanceSeed, Map<String, String> environ,
-            int taskStackBytes, Supplier<List<PlayerView>> players) {
         this.renderer = renderer;
         this.validator = validator;
         this.content = content;
-        this.players = players;
         this.machine = new MachineInstance(module,
                 new MachineInstance.Config(name, ENGINE_MODULE, ENTRY,
                         // Both halves of the contract are checked at load time, never at first
@@ -137,7 +111,7 @@ public final class AnimationInstance {
                                         MachineInstance.ENGINE_ABI_VERSION),
                                 new MachineInstance.AbiCheck(ABI_EXPORT,
                                         MIN_ABI_VERSION, ABI_VERSION)),
-                        memoryCapBytes, instanceSeed, environ, taskStackBytes),
+                        memoryCapBytes, instanceSeed),
                 logSink,
                 Map.of(MODULE, buildImports()));
     }
@@ -334,50 +308,7 @@ public final class AnimationInstance {
         m.put("is_alive", (ctx, a) -> registry.isAlive((int) a[0]) ? 1L : 0L);
         addEntityImports(m);
         addEffectImports(m);
-        addPlayerImports(m);
         return m;
-    }
-
-    /**
-     * The ABI-4 player imports: who is watching this placement, where they are and where they are
-     * looking — all in the placement's own frame, all read off the snapshot the main thread last
-     * handed over. Nothing here touches live server state, because nothing here runs on the main
-     * thread.
-     *
-     * <p>The data is non-deterministic by nature (it depends on who happens to be standing there),
-     * so an animation that reads it is no longer replayable from its seed alone — the same caveat
-     * the engine's non-deterministic random stream carries.
-     */
-    private void addPlayerImports(Map<String, HostFunction> m) {
-        m.put("players_len", (ctx, a) -> {
-            pendingPlayers = PlayerBlob.pack(selectPlayers(ctx, (int) a[0]));
-            return pendingPlayers.length;
-        });
-        m.put("players_read", (ctx, a) -> {
-            byte[] blob = pendingPlayers != null
-                    ? pendingPlayers
-                    : PlayerBlob.pack(selectPlayers(ctx, (int) a[0]));
-            ctx.writeBytes((int) a[1], blob);
-            pendingPlayers = null;
-            return 0L;
-        });
-        m.put("player_update", (ctx, a) -> {
-            String name = Marshal.readString(ctx, (int) a[0], (int) a[1]);
-            for (PlayerView p : players.get()) {
-                if (p.name().equals(name)) {
-                    Marshal.writeDoubles(ctx, (int) a[2], p.values());
-                    return 1L;
-                }
-            }
-            // Not a viewer any more: the out buffer is left exactly as the guest had it, so a
-            // held Player keeps its last known values rather than being zeroed.
-            return 0L;
-        });
-    }
-
-    /** The players one {@code players_len}/{@code players_read} call selects. */
-    private List<PlayerView> selectPlayers(com.jhuanglululu.wasm.ExecutionContext ctx, int queryPtr) {
-        return PlayerQuery.parse(ctx.readBytes(queryPtr, PlayerQuery.BYTES)).apply(players.get());
     }
 
     /**

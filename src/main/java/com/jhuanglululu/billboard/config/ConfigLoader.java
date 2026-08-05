@@ -62,19 +62,15 @@ public final class ConfigLoader {
                 (int) longValue(toml, "runtime.pool-shrink-delay-ticks",
                         d.runtime().poolShrinkDelayTicks(), problems),
                 longValue(toml, "runtime.instruction-budget", d.runtime().instructionBudget(), problems),
-                (int) longValue(toml, "runtime.memory-cap-mib", d.runtime().memoryCapMib(), problems),
-                (int) longValue(toml, "runtime.task-stack-bytes", d.runtime().taskStackBytes(), problems));
+                (int) longValue(toml, "runtime.memory-cap-mib", d.runtime().memoryCapMib(), problems));
         BillboardConfig.Proximity proximity = new BillboardConfig.Proximity(
                 (int) longValue(toml, "proximity.radius", d.proximity().radius(), problems),
                 (int) longValue(toml, "proximity.check-interval", d.proximity().checkInterval(), problems),
                 (int) longValue(toml, "proximity.linger-ticks", d.proximity().lingerTicks(), problems));
-        BillboardConfig.Snapshots snapshots = new BillboardConfig.Snapshots(
-                (int) longValue(toml, "snapshots.player-interval",
-                        d.snapshots().playerInterval(), problems));
         List<String> logViewers = stringList(toml, "logging.log-viewers", d.logViewers(), problems);
         boolean consoleLog = value("logging.console",
                 () -> toml.getBoolean("logging.console", d::consoleLog), d.consoleLog(), problems);
-        return new BillboardConfig(runtime, proximity, snapshots, logViewers, consoleLog);
+        return new BillboardConfig(runtime, proximity, logViewers, consoleLog);
     }
 
     private static long longValue(TomlTable toml, String key, long fallback, Consumer<String> problems) {
